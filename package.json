@@ -1,0 +1,19 @@
+{
+  "name": "sajadah",
+  "private": true,
+  "version": "0.52.0",
+  "packageManager": "pnpm@11.0.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @sajadah/api --filter @sajadah/web dev",
+    "dev:mobile": "pnpm --filter @sajadah/mobile start",
+    "build": "pnpm --filter @sajadah/shared build && pnpm --filter @sajadah/web build && pnpm --filter @sajadah/mobile build:web && pnpm --filter @sajadah/api build",
+    "start": "pnpm --filter @sajadah/api start",
+    "test": "pnpm --filter @sajadah/shared test && pnpm --filter @sajadah/api test",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @sajadah/api db:generate",
+    "db:seed": "pnpm --filter @sajadah/api db:seed"
+  },
+  "devDependencies": {
+    "react-doctor": "^0.9.18"
+  }
+}

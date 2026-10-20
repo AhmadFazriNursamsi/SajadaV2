@@ -1,0 +1,2 @@
+ALTER TABLE "members" ADD COLUMN "referral_code" text DEFAULT upper(substr(md5(gen_random_uuid()::text), 1, 8)) NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "members_tenant_referral_uq" ON "members" USING btree ("tenant_id","referral_code");

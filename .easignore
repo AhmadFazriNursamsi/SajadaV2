@@ -1,0 +1,15 @@
+# Hanya aplikasi mobile + packages/shared yang dikirim ke EAS. Data, basis data, cadangan, dan kode server/web TIDAK ikut diunggah.
+node_modules
+**/node_modules
+**/.data
+**/.expo
+.git
+apps/api/src
+apps/api/test
+apps/api/dist
+apps/api/drizzle
+apps/web/src
+apps/web/dist
+apps/mobile/dist-web
+apps/web/public
+*.log

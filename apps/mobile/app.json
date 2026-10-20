@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Sajadah",
+    "slug": "sajadah",
+    "scheme": "sajadah",
+    "version": "0.52.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#ffffff",
+    "ios": {
+      "bundleIdentifier": "id.sajadah.koperasi",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "id.sajadah.koperasi",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Sajadah memakai lokasi Anda hanya untuk memilih toko terdekat saat checkout. Lokasi tidak disimpan."
+        }
+      ],
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": false
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false,
+      "baseUrl": "/m"
+    },
+    "icon": "./assets/icon.png",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d1229b70-2679-4ada-986a-ac8077e620be"
+      }
+    },
+    "owner": "fazrinursyam",
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/icon.png"
+    }
+  }
+}

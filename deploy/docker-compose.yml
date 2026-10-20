@@ -1,0 +1,21 @@
+# Jalankan di server:  docker compose pull && docker compose up -d
+# Ganti OWNER/REPO dengan repositori GitHub Anda (huruf kecil), mis. ghcr.io/devoutsys/sajadah:latest
+services:
+  sajadah:
+    image: ghcr.io/OWNER/REPO:latest
+    container_name: sajadah
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"   # hanya bisa diakses reverse proxy di server yang sama
+    volumes:
+      - ./data:/data            # foto produk, voucher, dan profil (WAJIB dicadangkan)
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }

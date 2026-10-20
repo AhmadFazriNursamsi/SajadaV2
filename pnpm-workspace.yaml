@@ -1,0 +1,13 @@
+# Metro/Expo membutuhkan node_modules hoisted.
+nodeLinker: hoisted
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: true
+  '@nestjs/core': true
+  '@swc/core': true
+# Satu versi React untuk web & mobile (mengikuti Expo SDK 57).
+overrides:
+  react: 19.2.3
+  react-dom: 19.2.3

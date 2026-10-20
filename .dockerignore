@@ -1,0 +1,14 @@
+.git
+.github
+.data
+.env
+**/.env
+**/node_modules
+**/dist
+**/dist-web
+**/.expo
+**/.data
+*.log
+*.tsbuildinfo
+deploy
+README.md
