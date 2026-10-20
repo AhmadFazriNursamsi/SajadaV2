@@ -32,11 +32,38 @@ function lockDataDir(dir: string): () => void {
 const MIGRATIONS = resolve(__dirname, '../../drizzle');
 
 /**
+ * Bila database di DATABASE_URL belum ada, buatkan (perlu hak CREATEDB). Dimatikan dengan DB_AUTO_CREATE=false.
+ * Hanya menangani "database tidak ada" (kode 3D000); galat lain (sandi salah, host tak terjangkau) dibiarkan muncul apa adanya.
+ */
+async function ensureDatabase(url: string): Promise<void> {
+  if (process.env.DB_AUTO_CREATE === 'false') return;
+  const { Client } = await import('pg');
+  const probe = new Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
+  try { await probe.connect(); await probe.end(); return; } catch (e) {
+    await probe.end().catch(() => undefined);
+    if ((e as { code?: string }).code !== '3D000') throw e;
+  }
+  const u = new URL(url);
+  const name = decodeURIComponent(u.pathname.replace(/^\//, ''));
+  if (!/^[A-Za-z0-9_-]{1,63}$/.test(name)) throw new Error(`Nama database "${name}" tidak valid untuk dibuat otomatis (huruf, angka, _ dan - saja).`);
+  u.pathname = '/postgres';
+  const admin = new Client({ connectionString: u.toString(), connectionTimeoutMillis: 10_000 });
+  await admin.connect();
+  try {
+    await admin.query(`CREATE DATABASE "${name}"`);
+    console.log(`[db] Database "${name}" belum ada, sudah dibuat otomatis.`);
+  } catch (e) {
+    if ((e as { code?: string }).code !== '42P04') throw new Error(`Database "${name}" belum ada dan gagal dibuat otomatis (${(e as Error).message}). Buat manual atau beri user hak CREATEDB.`); // 42P04: keburu dibuat proses lain
+  } finally { await admin.end(); }
+}
+
+/**
  * Pilih driver: DATABASE_URL → PostgreSQL (node-postgres), selain itu PGlite embedded.
  * `memory://` memakai PGlite in-memory (dipakai test).
  */
 export async function createDb(url = process.env.DATABASE_URL, dataDir = process.env.PGLITE_DIR ?? join(process.cwd(), '.data/pglite')): Promise<DbHandle> {
   if (url && /^postgres(ql)?:\/\//.test(url)) {
+    await ensureDatabase(url);
     const { Pool } = await import('pg');
     const { drizzle } = await import('drizzle-orm/node-postgres');
     const { migrate } = await import('drizzle-orm/node-postgres/migrator');

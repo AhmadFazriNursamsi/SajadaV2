@@ -36,6 +36,9 @@ Isi `.env` (yang wajib saja):
 Sisanya sudah benar secara bawaan (`NODE_ENV=production`, `TRUST_PROXY=true`, **`SEED=false`**, folder unggahan `/data/...`).
 Jangan pernah mengisi `SEED=true` di produksi: pada database kosong itu membuat data demo dengan akun berkata sandi umum.
 
+Bila database `NAMADB` belum ada, aplikasi **membuatnya otomatis** saat start (user perlu hak `CREATEDB`; matikan dengan `DB_AUTO_CREATE=false`).
+Karakter khusus di sandi harus di-URL-encode (`@` → `%40`, `#` → `%23`, `/` → `%2F`).
+
 Sarankan database dan user khusus:
 
 ```sql
