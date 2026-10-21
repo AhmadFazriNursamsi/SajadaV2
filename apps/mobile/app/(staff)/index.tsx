@@ -54,7 +54,7 @@ export default function Tasks() {
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ paddingBottom: 32 }}
       refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { void refetch(); void refetchProds(); }} />}>
       {q.isLoading ? <ActivityIndicator color={C.green} style={{ marginTop: 80 }} /> : q.error ? <Text style={{ color: C.bad[1], padding: 16 }}>Gagal memuat: {(q.error as Error).message}</Text> : d && (<>
-        <StaffHeader title={d.tenant.depotName} subtitle={`${me?.name ?? ''} · ${d.tenant.name}`} />
+        <StaffHeader bell title={d.tenant.depotName} subtitle={`${me?.name ?? ''} · ${d.tenant.name}`} />
         <View style={{ padding: 16, gap: 14, marginTop: -36 }}>
           <TaskTiles items={tiles} />
           <SectionTitle>Menu Toko</SectionTitle>

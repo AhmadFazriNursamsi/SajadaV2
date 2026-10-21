@@ -1,5 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit, Post } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { Database } from '../db/db';
 import { notifications, pushTokens } from '../db/schema';
@@ -8,6 +8,8 @@ import { ZodPipe } from '../common/zod.pipe';
 import { CurrentActor, Roles } from '../auth/auth.decorators';
 import type { Actor } from '../auth/auth.types';
 
+/** Harus sama dengan CHANNEL_ID di aplikasi (apps/mobile/src/push.ts). */
+const CHANNEL_ID = 'sajadah-v2';
 const readSchema = z.object({ ids: z.array(z.string().uuid()).max(200).optional() });
 const tokenSchema = z.object({ token: z.string().regex(/^(Expo|Exponent)PushToken\[[^\]]{8,}\]$/, 'Token push tidak valid') });
 
@@ -15,15 +17,21 @@ const tokenSchema = z.object({ token: z.string().regex(/^(Expo|Exponent)PushToke
 export class NotificationsService {
   constructor(@InjectDb() private readonly db: Database) {}
 
-  private need(a: Actor) {
-    if (!a.mid) throw new ForbiddenException('Akun tidak terhubung ke anggota');
-    return a.mid;
+  /** Pemilik kotak masuk: anggota (lewat memberId) atau petugas (lewat userId). */
+  private owner(a: Actor) {
+    if (a.mid) return { member: a.mid, user: null };
+    if (a.role === 'staff') return { member: null, user: a.sub };
+    throw new ForbiddenException('Akun ini tidak memiliki notifikasi');
+  }
+  private mine(a: Actor) {
+    const o = this.owner(a);
+    return o.member ? eq(notifications.memberId, o.member) : eq(notifications.userId, o.user!);
   }
 
   async list(a: Actor) {
-    const mid = this.need(a);
-    const rows = await this.db.select().from(notifications).where(eq(notifications.memberId, mid)).orderBy(desc(notifications.createdAt)).limit(200);
-    const unread = await this.db.select({ tab: notifications.tab, n: sql<number>`count(*)`.mapWith(Number) }).from(notifications).where(and(eq(notifications.memberId, mid), isNull(notifications.readAt))).groupBy(notifications.tab);
+    const mine = this.mine(a);
+    const rows = await this.db.select().from(notifications).where(mine).orderBy(desc(notifications.createdAt)).limit(200);
+    const unread = await this.db.select({ tab: notifications.tab, n: sql<number>`count(*)`.mapWith(Number) }).from(notifications).where(and(mine, isNull(notifications.readAt))).groupBy(notifications.tab);
     return {
       items: rows.map((n) => ({ id: n.id, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId, read: !!n.readAt, at: n.createdAt })),
       unread: { info: unread.find((u) => u.tab === 'info')?.n ?? 0, trx: unread.find((u) => u.tab === 'trx')?.n ?? 0 },
@@ -32,15 +40,14 @@ export class NotificationsService {
 
   /** Tandai terbaca: `ids` yang diberikan, atau semuanya bila `ids` kosong. */
   async markRead(a: Actor, ids?: string[]) {
-    const mid = this.need(a);
-    const where = and(eq(notifications.memberId, mid), isNull(notifications.readAt), ids?.length ? inArray(notifications.id, ids) : undefined);
+    const where = and(this.mine(a), isNull(notifications.readAt), ids?.length ? inArray(notifications.id, ids) : undefined);
     await this.db.update(notifications).set({ readAt: new Date() }).where(where);
     return { ok: true };
   }
 
   async saveToken(a: Actor, token: string) {
-    const mid = this.need(a);
-    await this.db.insert(pushTokens).values({ tenantId: a.tid, memberId: mid, token }).onConflictDoUpdate({ target: pushTokens.token, set: { memberId: mid, tenantId: a.tid } });
+    const o = this.owner(a);
+    await this.db.insert(pushTokens).values({ tenantId: a.tid, memberId: o.member, userId: o.user, token }).onConflictDoUpdate({ target: pushTokens.token, set: { memberId: o.member, userId: o.user, tenantId: a.tid } });
     return { ok: true };
   }
 }
@@ -69,8 +76,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     try {
       const fresh = await this.db.select().from(notifications).where(isNull(notifications.pushedAt)).orderBy(notifications.createdAt).limit(50);
       if (!fresh.length) return;
-      const tokens = await this.db.select().from(pushTokens).where(inArray(pushTokens.memberId, [...new Set(fresh.map((n) => n.memberId))]));
-      const messages = fresh.flatMap((n) => tokens.filter((t) => t.memberId === n.memberId).map((t) => ({ to: t.token, title: n.title, body: n.body, sound: 'default', channelId: 'default', data: { route: n.route, refId: n.refId, id: n.id } })));
+      const mids = [...new Set(fresh.flatMap((n) => (n.memberId ? [n.memberId] : [])))], uids = [...new Set(fresh.flatMap((n) => (n.userId ? [n.userId] : [])))];
+      const tokens = await this.db.select().from(pushTokens).where(or(mids.length ? inArray(pushTokens.memberId, mids) : undefined, uids.length ? inArray(pushTokens.userId, uids) : undefined));
+      const messages = fresh.flatMap((n) => tokens.filter((t) => (n.memberId ? t.memberId === n.memberId : t.userId === n.userId)).map((t) => ({ to: t.token, title: n.title, body: n.body, sound: 'default', channelId: CHANNEL_ID, data: { route: n.route, refId: n.refId, id: n.id } })));
       if (messages.length) {
         const res = await fetch('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(messages) });
         if (!res.ok) { this.log.warn(`Push gagal (${res.status}); dicoba lagi.`); return; }
@@ -89,9 +97,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
 @Controller()
 class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
-  @Get('me/notifications') @Roles('member') list(@CurrentActor() a: Actor) { return this.svc.list(a); }
-  @Post('me/notifications/read') @Roles('member') read(@CurrentActor() a: Actor, @Body(new ZodPipe(readSchema)) b: z.infer<typeof readSchema>) { return this.svc.markRead(a, b.ids); }
-  @Post('me/push-token') @Roles('member') token(@CurrentActor() a: Actor, @Body(new ZodPipe(tokenSchema)) b: z.infer<typeof tokenSchema>) { return this.svc.saveToken(a, b.token); }
+  @Get('me/notifications') @Roles('member', 'staff') list(@CurrentActor() a: Actor) { return this.svc.list(a); }
+  @Post('me/notifications/read') @Roles('member', 'staff') read(@CurrentActor() a: Actor, @Body(new ZodPipe(readSchema)) b: z.infer<typeof readSchema>) { return this.svc.markRead(a, b.ids); }
+  @Post('me/push-token') @Roles('member', 'staff') token(@CurrentActor() a: Actor, @Body(new ZodPipe(tokenSchema)) b: z.infer<typeof tokenSchema>) { return this.svc.saveToken(a, b.token); }
 }
 
 @Module({ controllers: [NotificationsController], providers: [NotificationsService, PushService] })

@@ -4,7 +4,9 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
-import { destination } from './notifData';
+import { destination, type Notif } from './notifData';
+
+const CHANNEL_ID = 'sajadah-v2';
 
 /**
  * Push notification ke HP. Hanya jalan di aplikasi terpasang (APK/IPA): Expo Go dan web tidak mendukung push jarak jauh,
@@ -21,7 +23,8 @@ export function usePush(enabled: boolean) {
       try {
         const N = await import('expo-notifications');
         N.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
-        if (Platform.OS === 'android') await N.setNotificationChannelAsync('default', { name: 'Sajadah', importance: N.AndroidImportance.HIGH });
+        // Pengaturan saluran Android tidak bisa diubah setelah dibuat; untuk mengganti suara, naikkan id saluran (juga di server: CHANNEL_ID).
+        if (Platform.OS === 'android') await N.setNotificationChannelAsync(CHANNEL_ID, { name: 'Sajadah', importance: N.AndroidImportance.HIGH, sound: 'notif.mp3', vibrationPattern: [0, 250, 150, 250], lightColor: '#C8992B' });
         let { status } = await N.getPermissionsAsync();
         if (status !== 'granted') status = (await N.requestPermissionsAsync()).status;
         if (status !== 'granted' || cancelled) return;
@@ -30,7 +33,7 @@ export function usePush(enabled: boolean) {
         await api('POST', '/me/push-token', { token: data });
         const got = N.addNotificationReceivedListener(() => { void qc.invalidateQueries({ queryKey: ['/me/notifications'] }); });
         const tap = N.addNotificationResponseReceivedListener((r) => {
-          const d = r.notification.request.content.data as { route?: 'orders' | 'reward' | 'coins'; refId?: string | null; id?: string };
+          const d = r.notification.request.content.data as { route?: Notif['route']; refId?: string | null; id?: string };
           void qc.invalidateQueries({ queryKey: ['/me/notifications'] });
           if (d?.route) router.push(destination({ route: d.route, refId: d.refId ?? null }) as never);
         });

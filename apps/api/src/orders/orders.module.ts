@@ -82,6 +82,10 @@ export class OrdersService {
       }).returning();
       created.push(o!);
     }
+    if (!approved) {
+      const total = groupTotal(created);
+      await this.core.notifyDepotStaff(tx, { tenantId: a.tid, depotId: depot.id, tab: 'trx', cat: 'Perlu diproses', title: 'Pesanan baru menunggu persetujuan', body: `#${groupNo} · ${seller.name} · Rp${total.toLocaleString('id-ID')} (${created.length} produk).`, route: 'staff-orders', refId: 'awaiting_approval' });
+    }
     await this.core.audit(tx, a, `Pesanan dibuat di ${depot.name}${buyer ? '' : ` untuk pelanggan ${buyerCols.customerName}`} dan stok direservasi (${groupNo}, ${created.length} produk)${approved ? '' : '; menunggu persetujuan toko'}`);
     return created;
   }
@@ -225,6 +229,7 @@ export class OrdersService {
       if (rows.some((o) => o.pay !== 'unpaid')) throw new BusinessError('Pesanan sudah dibayar.');
       const name = await this.debitBalance(tx, head.sellerId, groupTotal(rows), 'pembayaran');
       await this.setAll(tx, rows, { pay: 'balance' });
+      await this.core.notifyDepotStaff(tx, { tenantId: head.tenantId, depotId: head.depotId, tab: 'trx', cat: 'Perlu diproses', title: 'Pesanan sudah dibayar', body: `#${head.groupNo} · ${name} · Rp${groupTotal(rows).toLocaleString('id-ID')}. Siap dikirim.`, route: 'staff-orders', refId: 'paid' });
       await this.core.audit(tx, a, `${head.groupNo} dibayar dari saldo belanja ${name}`);
       return { ok: true };
     });
@@ -271,6 +276,7 @@ export class OrdersService {
       const bad = lines.filter((l) => l.got < l.o.qty || l.issue);
       const status = bad.length ? 'open' : 'ok';
       const [r] = await tx.insert(orderReports).values({ tenantId: a.tid, groupId: head.groupId, groupNo: head.groupNo, depotId: head.depotId, memberId, status, note: input.note || null }).returning();
+      if (bad.length) await this.core.notifyDepotStaff(tx, { tenantId: a.tid, depotId: head.depotId, tab: 'trx', cat: 'Laporan', title: 'Anggota melaporkan masalah barang', body: `#${head.groupNo}: ${bad.length} produk bermasalah. Periksa dan tanggapi.`, route: 'staff-orders', refId: 'report' });
       // Pemeriksaan anggota sekaligus konfirmasi barang sudah diterima: petugas tidak perlu mengonfirmasi lagi.
       let autoReceived = false;
       if (rows.some((o) => !o.received)) {

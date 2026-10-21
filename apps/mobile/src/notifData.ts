@@ -5,23 +5,29 @@ import { api } from './api';
 import type { ShopProduct } from './shopData';
 
 export type NotifTab = 'info' | 'trx';
-export type NotifRoute = 'orders' | 'reward' | 'coins' | 'product';
+export type NotifRoute = 'orders' | 'reward' | 'coins' | 'product' | 'staff-orders' | 'staff-receive';
 export interface Notif { key: string; id: string | null; tab: NotifTab; cat: string; title: string; body: string; at: string | null; read: boolean; route: NotifRoute; refId: string | null }
 
 interface Inbox { items: { id: string; tab: NotifTab; cat: string; title: string; body: string; route: NotifRoute; refId: string | null; read: boolean; at: string }[]; unread: { info: number; trx: number } }
 
-export const TRX_CATS = ['Semua', 'Berjalan', 'Selesai', 'Dibatalkan'];
-export const INFO_CATS = ['Semua', 'Saldo', 'Koin', 'Promo'];
+/** Urutan kategori pada chip filter; kategori yang belum punya notifikasi tidak ditampilkan. */
+const CAT_ORDER = ['Perlu diproses', 'Berjalan', 'Selesai', 'Dibatalkan', 'Laporan', 'Saldo', 'Koin', 'Kiriman', 'Promo'];
+export const catsFor = (items: Notif[], tab: NotifTab) => {
+  const present = new Set(items.filter((n) => n.tab === tab).map((n) => n.cat));
+  return ['Semua', ...CAT_ORDER.filter((c) => present.has(c)), ...[...present].filter((c) => !CAT_ORDER.includes(c))];
+};
 
 const ICON: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
-  Berjalan: ['cube-outline', 'warn'], Selesai: ['checkmark-circle-outline', 'ok'], Dibatalkan: ['close-circle-outline', 'bad'],
-  Saldo: ['wallet-outline', 'ok'], Koin: ['ribbon-outline', 'warn'], Promo: ['pricetag-outline', 'warn'],
+  'Perlu diproses': ['alert-circle-outline', 'warn'], Berjalan: ['cube-outline', 'warn'], Selesai: ['checkmark-circle-outline', 'ok'], Dibatalkan: ['close-circle-outline', 'bad'],
+  Laporan: ['warning-outline', 'bad'], Saldo: ['wallet-outline', 'ok'], Koin: ['ribbon-outline', 'warn'], Kiriman: ['car-outline', 'ok'], Promo: ['pricetag-outline', 'warn'],
 };
 export const iconOf = (cat: string) => ICON[cat] ?? ['notifications-outline', 'ok'];
 
 /** Tujuan layar untuk satu notifikasi; pesanan membuka kartu pesanannya. */
 export function destination(n: Pick<Notif, 'route' | 'refId'>): { pathname: string; params?: Record<string, string> } {
   if (n.route === 'orders') return { pathname: '/(member)/orders', params: n.refId ? { open: n.refId } : undefined };
+  if (n.route === 'staff-orders') return { pathname: '/(staff)/orders', params: n.refId ? { status: n.refId } : undefined };
+  if (n.route === 'staff-receive') return { pathname: '/(staff)/receive', params: n.refId ? { id: n.refId } : undefined };
   if (n.route === 'product') return { pathname: '/(member)/product', params: n.refId ? { id: n.refId } : undefined };
   return { pathname: n.route === 'coins' ? '/(member)/coins' : '/(member)/reward' };
 }

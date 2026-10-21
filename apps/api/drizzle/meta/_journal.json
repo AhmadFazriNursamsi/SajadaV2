@@ -267,6 +267,13 @@
       "when": 1792565378452,
       "tag": "0037_hard_lily_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792571493301,
+      "tag": "0038_eminent_daimon_hellstrom",
+      "breakpoints": true
     }
   ]
 }

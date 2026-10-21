@@ -144,6 +144,7 @@ export class CentralService {
       }
       const total = items.reduce((s, i) => s + i.qty, 0);
       await this.core.audit(tx, a, `Pengiriman ${no} ke ${depot.name}: ${items.map((i) => `${i.qty} ${ps.find((p) => p.id === i.productId)!.name}`).join(', ')} (total ${total})${extraAudit}`);
+      await this.core.notifyDepotStaff(tx, { tenantId: a.tid, depotId: depot.id, tab: 'info', cat: 'Kiriman', title: 'Kiriman barang dari pusat', body: `${no}: ${total} barang menuju ${depot.name}. Periksa saat tiba.`, route: 'staff-receive', refId: sh!.id });
       return { id: sh!.id, no, depotName: depot.name };
     }
   }

@@ -603,7 +603,9 @@ export const installmentEntries = pgTable('installment_entries', {
 export const notifications = pgTable('notifications', {
   id: pk(),
   tenantId: tenantRef(),
-  memberId: uuid('member_id').notNull().references(() => members.id),
+  /** Penerima: anggota (memberId) atau petugas (userId); salah satu terisi. */
+  memberId: uuid('member_id').references(() => members.id),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
   /** 'info' (saldo, koin, voucher) atau 'trx' (pesanan). */
   tab: text('tab').notNull(),
   cat: text('cat').notNull(),
@@ -616,13 +618,15 @@ export const notifications = pgTable('notifications', {
   readAt: timestamp('read_at', { withTimezone: true }),
   pushedAt: timestamp('pushed_at', { withTimezone: true }),
   createdAt: createdAt(),
-}, (t) => [index('notifications_member_idx').on(t.memberId, t.createdAt)]);
+}, (t) => [index('notifications_member_idx').on(t.memberId, t.createdAt), index('notifications_user_idx').on(t.userId, t.createdAt)]);
 
 /** Token push Expo per perangkat anggota. */
 export const pushTokens = pgTable('push_tokens', {
   id: pk(),
   tenantId: tenantRef(),
-  memberId: uuid('member_id').notNull().references(() => members.id),
+  /** Penerima: anggota (memberId) atau petugas (userId); salah satu terisi. */
+  memberId: uuid('member_id').references(() => members.id),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
   token: text('token').notNull(),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('push_tokens_token_uq').on(t.token)]);

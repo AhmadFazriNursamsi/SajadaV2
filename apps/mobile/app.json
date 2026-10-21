@@ -33,7 +33,14 @@
         }
       ],
       "expo-font",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#005641",
+          "sounds": ["./assets/sounds/notif.mp3"]
+        }
+      ],
       [
         "expo-build-properties",
         {

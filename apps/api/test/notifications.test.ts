@@ -16,6 +16,22 @@ afterAll(() => app.close());
 
 const inbox = async () => (await member.get('/me/notifications')).body;
 
+describe('Notifikasi petugas toko', () => {
+  it('pesanan baru dan pembayaran masuk kotak masuk petugas toko; admin tidak punya kotak masuk', async () => {
+    const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 1 }] });
+    const inbox = async () => (await staff.get('/me/notifications')).body;
+    const n = await inbox();
+    const fresh = n.items.find((x: any) => x.title === 'Pesanan baru menunggu persetujuan');
+    expect(fresh).toMatchObject({ tab: 'trx', route: 'staff-orders', refId: 'awaiting_approval', read: false });
+    expect(n.unread.trx).toBeGreaterThanOrEqual(1);
+    await staff.post(`/orders/${placed.body[0].id}/approve`);
+    expect((await staff.post('/me/notifications/read', {})).status).toBe(201);
+    expect((await inbox()).unread).toEqual({ info: 0, trx: 0 });
+    expect((await admin.get('/me/notifications')).status).toBe(403);
+    expect((await staff.post('/me/push-token', { token: 'ExponentPushToken[petugas-abcdefgh]' })).status).toBe(201);
+  });
+});
+
 describe('Notifikasi anggota', () => {
   it('kejadian pesanan masuk kotak masuk, dengan tujuan dan belum dibaca', async () => {
     const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 4 }] });
@@ -52,7 +68,7 @@ describe('Notifikasi anggota', () => {
     await member.post('/me/notifications/read', {});
     const after = await inbox();
     expect(after.unread).toEqual({ info: 0, trx: 0 });
-    expect((await staff.get('/me/notifications')).status).toBe(403);
+    expect((await admin.get('/me/notifications')).status).toBe(403);
     expect((await member.post('/me/notifications/read', { ids: ['bukan-uuid'] })).status).toBe(400);
   });
 

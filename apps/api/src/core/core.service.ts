@@ -2,19 +2,28 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database } from '../db/db';
 import { COMMISSION_RATES } from '@sajadah/shared';
-import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockMovements } from '../db/schema';
+import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockMovements, users } from '../db/schema';
 import { BusinessError } from '../common/errors';
 import type { Actor } from '../auth/auth.types';
 
 type Q = Database; // Tx kompatibel secara struktural dengan Database
 
-export interface NotifyInput { tenantId: string; memberId: string; tab: 'info' | 'trx'; cat: string; title: string; body: string; route: 'orders' | 'reward' | 'coins'; refId?: string }
+export type NotifyRoute = 'orders' | 'reward' | 'coins' | 'staff-orders' | 'staff-receive';
+export interface NotifyInput { tenantId: string; memberId: string; tab: 'info' | 'trx'; cat: string; title: string; body: string; route: NotifyRoute; refId?: string }
+export type StaffNotifyInput = Omit<NotifyInput, 'memberId'> & { depotId: string };
 
 @Injectable()
 export class CoreService {
   /** Catat notifikasi untuk anggota di dalam transaksi yang sama dengan kejadiannya; pengiriman push dilakukan terpisah (PushService). */
   async notify(q: Q, n: NotifyInput) {
     await q.insert(notifications).values({ tenantId: n.tenantId, memberId: n.memberId, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId ?? null });
+  }
+
+  /** Kabari semua petugas yang bertugas di toko itu. */
+  async notifyDepotStaff(q: Q, n: StaffNotifyInput) {
+    const staff = await q.select({ id: users.id }).from(users).where(and(eq(users.tenantId, n.tenantId), eq(users.role, 'staff'), eq(users.depotId, n.depotId)));
+    if (!staff.length) return;
+    await q.insert(notifications).values(staff.map((u) => ({ tenantId: n.tenantId, userId: u.id, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId ?? null })));
   }
 
   /** Nomor urut atomik per tenant+kunci (upsert increment). */
