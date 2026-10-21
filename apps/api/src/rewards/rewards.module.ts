@@ -81,6 +81,8 @@ export class RewardsService {
     if (!a.mid) throw new ForbiddenException('Akun tidak terhubung ke anggota');
     const [m] = await this.db.select().from(members).where(and(eq(members.id, a.mid), eq(members.tenantId, a.tid)));
     const entries = await this.db.select().from(installmentEntries).where(eq(installmentEntries.memberId, a.mid)).orderBy(desc(installmentEntries.day)).limit(60);
+    const counted = await this.db.select({ day: installmentEntries.day }).from(installmentEntries).where(and(eq(installmentEntries.memberId, a.mid), gt(installmentEntries.seq, 0))).orderBy(installmentEntries.day);
+    const paidDates = [...new Set(counted.map((e) => e.day))];
     const days = m?.installmentDays ?? 0, arrears = m?.installmentArrears ?? 0;
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
     const remainingDays = Math.max(0, INSTALLMENT_DAYS - days);
@@ -89,6 +91,7 @@ export class RewardsService {
       remainingAmount: remainingDays * INSTALLMENT_AMOUNT + arrears,
       status: days === 0 && arrears === 0 ? 'belum_mulai' : remainingDays === 0 && arrears === 0 ? 'lunas' : 'berjalan',
       chargedToday: entries.some((e) => e.day === today),
+      today, startDay: paidDates[0] ?? null, paidDates,
       entries: entries.map((e) => ({ id: e.id, day: e.day, seq: e.seq, due: e.due, paid: e.paid, arrearsAfter: e.arrearsAfter, refNo: e.refNo })),
     };
   }
@@ -145,6 +148,7 @@ export class RewardsService {
         await tx.update(members).set({ rewardBalance: m!.rewardBalance + w.amount }).where(eq(members.id, m!.id));
         await tx.insert(rewardEntries).values({ tenantId: a.tid, memberId: w.memberId, kind: 'refund', amount: w.amount, refNo: w.no, note: `Penarikan ditolak: ${reason}` });
       }
+      await this.core.notify(tx, { tenantId: a.tid, memberId: w.memberId, tab: 'info', cat: 'Saldo', title: to === 'paid' ? 'Penarikan sudah ditransfer' : 'Penarikan ditolak', body: to === 'paid' ? `${w.no}: ${rp(w.amount)} sudah ditransfer ke ${w.bank} ${w.accountNo}.` : `${w.no}: ${rp(w.amount)} ditolak (${reason}). Saldo dikembalikan.`, route: 'reward' });
       await this.core.audit(tx, a, to === 'paid' ? `${w.no}: penarikan ${rp(w.amount)} ditandai sudah ditransfer ke ${w.bank} ${w.accountNo}` : `${w.no}: penarikan ${rp(w.amount)} ditolak (${reason}); saldo dikembalikan`);
       return { ok: true };
     });

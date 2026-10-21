@@ -260,6 +260,13 @@
       "when": 1792484959179,
       "tag": "0036_small_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792565378452,
+      "tag": "0037_hard_lily_hollister",
+      "breakpoints": true
     }
   ]
 }

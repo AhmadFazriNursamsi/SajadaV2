@@ -2,14 +2,21 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Database } from '../db/db';
 import { COMMISSION_RATES } from '@sajadah/shared';
-import { auditLog, commissionPlans, counters, depotStock, depots, orders, purchaseOrders, stockMovements } from '../db/schema';
+import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockMovements } from '../db/schema';
 import { BusinessError } from '../common/errors';
 import type { Actor } from '../auth/auth.types';
 
 type Q = Database; // Tx kompatibel secara struktural dengan Database
 
+export interface NotifyInput { tenantId: string; memberId: string; tab: 'info' | 'trx'; cat: string; title: string; body: string; route: 'orders' | 'reward' | 'coins'; refId?: string }
+
 @Injectable()
 export class CoreService {
+  /** Catat notifikasi untuk anggota di dalam transaksi yang sama dengan kejadiannya; pengiriman push dilakukan terpisah (PushService). */
+  async notify(q: Q, n: NotifyInput) {
+    await q.insert(notifications).values({ tenantId: n.tenantId, memberId: n.memberId, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId ?? null });
+  }
+
   /** Nomor urut atomik per tenant+kunci (upsert increment). */
   async next(q: Q, tenantId: string, key: string): Promise<number> {
     const [r] = await q

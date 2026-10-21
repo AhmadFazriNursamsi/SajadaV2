@@ -598,3 +598,31 @@ export const installmentEntries = pgTable('installment_entries', {
   refNo: text('ref_no'),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('installment_member_day_uq').on(t.memberId, t.day), index('installment_tenant_idx').on(t.tenantId, t.createdAt)]);
+
+/** Kotak masuk anggota: dibuat saat ada kejadian (pesanan, saldo, koin, voucher). `readAt` kosong = belum dibaca; `pushedAt` kosong = belum dikirim ke HP. */
+export const notifications = pgTable('notifications', {
+  id: pk(),
+  tenantId: tenantRef(),
+  memberId: uuid('member_id').notNull().references(() => members.id),
+  /** 'info' (saldo, koin, voucher) atau 'trx' (pesanan). */
+  tab: text('tab').notNull(),
+  cat: text('cat').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  /** Layar tujuan di aplikasi, mis. 'orders', 'reward', 'coins'. */
+  route: text('route').notNull(),
+  /** Id yang dibuka di layar tujuan (mis. groupId pesanan). */
+  refId: text('ref_id'),
+  readAt: timestamp('read_at', { withTimezone: true }),
+  pushedAt: timestamp('pushed_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('notifications_member_idx').on(t.memberId, t.createdAt)]);
+
+/** Token push Expo per perangkat anggota. */
+export const pushTokens = pgTable('push_tokens', {
+  id: pk(),
+  tenantId: tenantRef(),
+  memberId: uuid('member_id').notNull().references(() => members.id),
+  token: text('token').notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('push_tokens_token_uq').on(t.token)]);

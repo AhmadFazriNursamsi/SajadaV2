@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from '../../src/api';
@@ -115,6 +115,14 @@ export default function Orders() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
   const { pay, confirm, setConfirm } = usePay(setMsg);
+  // Dibuka dari notifikasi: tampilkan pesanan itu terbuka, dengan filter dikosongkan agar pasti terlihat.
+  const { open: openParam } = useLocalSearchParams<{ open?: string }>();
+  useEffect(() => {
+    if (!openParam) return;
+    setKind('all'); setStatus('all'); setDays('all'); setText(''); setSearching(false);
+    setOpenId(openParam);
+    router.setParams({ open: undefined });
+  }, [openParam, router]);
 
   const all = useMemo(() => groupOrders(q.data?.orders ?? []), [q.data]);
   const list = useMemo(() => all.filter((o) => matches(o, { kind, status, days, q: text })), [all, kind, status, days, text]);

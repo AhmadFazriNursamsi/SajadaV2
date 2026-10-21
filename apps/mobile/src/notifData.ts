@@ -1,53 +1,39 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import { useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useData, rupiah } from './hooks';
-import { useSession } from './session';
+import { api } from './api';
 import type { ShopProduct } from './shopData';
 
 export type NotifTab = 'info' | 'trx';
-export interface Notif { key: string; tab: NotifTab; cat: string; title: string; body: string; at: string | null; to: { pathname: string; params?: Record<string, string> } }
+export type NotifRoute = 'orders' | 'reward' | 'coins' | 'product';
+export interface Notif { key: string; id: string | null; tab: NotifTab; cat: string; title: string; body: string; at: string | null; read: boolean; route: NotifRoute; refId: string | null }
 
-interface OrderRow { groupId: string; groupNo: string; product: string; status: string; role: 'seller' | 'buyer'; createdAt: string; total: number }
-interface Rewards { entries: { id: string; amount: number; note: string | null; kind: string; createdAt: string }[]; withdrawals: { id: string; no: string; amount: number; status: 'pending' | 'paid' | 'rejected'; createdAt: string }[] }
+interface Inbox { items: { id: string; tab: NotifTab; cat: string; title: string; body: string; route: NotifRoute; refId: string | null; read: boolean; at: string }[]; unread: { info: number; trx: number } }
 
 export const TRX_CATS = ['Semua', 'Berjalan', 'Selesai', 'Dibatalkan'];
-export const INFO_CATS = ['Semua', 'Saldo', 'Promo'];
+export const INFO_CATS = ['Semua', 'Saldo', 'Koin', 'Promo'];
 
-const TRX_TEXT: Record<string, [string, string, string]> = {
-  awaiting_approval: ['Menunggu persetujuan toko', 'Pesanan menunggu disetujui toko. Saldo terpotong setelah disetujui.', 'Berjalan'],
-  awaiting_payment: ['Menunggu pembayaran', 'Pesanan sudah disetujui. Selesaikan pembayaran agar segera disiapkan.', 'Berjalan'],
-  paid: ['Pesanan disiapkan', 'Pembayaran diterima. Toko sedang menyiapkan pesananmu.', 'Berjalan'],
-  shipped: ['Pesanan dalam pengiriman', 'Pesananmu sedang dikirim. Konfirmasi saat barang diterima.', 'Berjalan'],
-  received: ['Pesanan selesai', 'Terima kasih sudah belanja! Belanja lagi dan kumpulkan lebih banyak saldo penarikan.', 'Selesai'],
-  cancelled: ['Pesanan dibatalkan', 'Pesanan ini dibatalkan.', 'Dibatalkan'],
-  returned: ['Pesanan diretur', 'Pesanan ini diretur.', 'Dibatalkan'],
+const ICON: Record<string, [string, 'ok' | 'warn' | 'bad']> = {
+  Berjalan: ['cube-outline', 'warn'], Selesai: ['checkmark-circle-outline', 'ok'], Dibatalkan: ['close-circle-outline', 'bad'],
+  Saldo: ['wallet-outline', 'ok'], Koin: ['ribbon-outline', 'warn'], Promo: ['pricetag-outline', 'warn'],
 };
-const WD_TEXT = { pending: 'diajukan, menunggu pengurus mentransfer', paid: 'sudah ditransfer ke rekeningmu', rejected: 'ditolak, saldo dikembalikan' } as const;
+export const iconOf = (cat: string) => ICON[cat] ?? ['notifications-outline', 'ok'];
 
-function groupRows(rows: OrderRow[]) {
-  const g = new Map<string, OrderRow[]>();
-  for (const r of rows) g.set(r.groupId, [...(g.get(r.groupId) ?? []), r]);
-  return [...g.values()].map((rs) => ({ ...rs[0]!, total: rs.reduce((s, r) => s + r.total, 0), more: rs.length - 1 }));
+/** Tujuan layar untuk satu notifikasi; pesanan membuka kartu pesanannya. */
+export function destination(n: Pick<Notif, 'route' | 'refId'>): { pathname: string; params?: Record<string, string> } {
+  if (n.route === 'orders') return { pathname: '/(member)/orders', params: n.refId ? { open: n.refId } : undefined };
+  if (n.route === 'product') return { pathname: '/(member)/product', params: n.refId ? { id: n.refId } : undefined };
+  return { pathname: n.route === 'coins' ? '/(member)/coins' : '/(member)/reward' };
 }
 
-export function buildNotifs(orders: OrderRow[], rewards: Rewards | undefined, products: ShopProduct[]): Notif[] {
-  const out: Notif[] = [];
-  for (const o of groupRows(orders)) {
-    const [title, body, cat] = TRX_TEXT[o.status] ?? ['Status pesanan diperbarui', 'Lihat rinciannya di Transaksi.', 'Berjalan'];
-    const what = `${o.product}${o.more > 0 ? ` dan ${o.more} produk lainnya` : ''}`;
-    out.push({ key: `o${o.groupId}`, tab: 'trx', cat, title: o.role === 'seller' ? `Penjualan: ${title.toLowerCase()}` : title, body: `#${o.groupNo} · ${what} · ${rupiah(o.total)}.${o.role === 'seller' ? '' : ` ${body}`}`, at: o.createdAt, to: { pathname: '/(member)/orders' } });
-  }
-  for (const e of rewards?.entries ?? []) {
-    if (e.amount <= 0) continue;
-    out.push({ key: `e${e.id}`, tab: 'info', cat: 'Saldo', title: 'Saldo penarikan bertambah', body: `Kamu mendapat ${rupiah(e.amount)} ke saldo penarikan${e.note ? ` (${e.note})` : ''}. Yuk, belanja lagi dan kumpulkan lebih banyak.`, at: e.createdAt, to: { pathname: '/(member)/reward' } });
-  }
-  for (const w of rewards?.withdrawals ?? []) {
-    out.push({ key: `w${w.id}`, tab: 'info', cat: 'Saldo', title: `Penarikan ${w.no}`, body: `Penarikan ${rupiah(w.amount)} ${WD_TEXT[w.status]}.`, at: w.createdAt, to: { pathname: '/(member)/reward' } });
-  }
-  for (const p of products.filter((x) => x.discountPct > 0)) {
-    out.push({ key: `p${p.id}`, tab: 'info', cat: 'Promo', title: `Diskon ${p.discountPct}% ${p.name}`, body: `${p.name} kini ${rupiah(p.price)} (normal ${rupiah(p.listPrice)}). Belanja sebelum kehabisan.`, at: null, to: { pathname: '/(member)/product', params: { id: p.id } } });
-  }
-  return out.sort((a, b) => (b.at ? Date.parse(b.at) : 0) - (a.at ? Date.parse(a.at) : 0));
+/** Pengelompokan tanggal ala kotak masuk: "Hari ini", "Kemarin", "Sebelumnya". */
+export function dayGroup(iso: string | null, now = Date.now()) {
+  if (!iso) return 'Promo berjalan';
+  const start = new Date(now); start.setHours(0, 0, 0, 0);
+  const t = Date.parse(iso);
+  if (t >= start.getTime()) return 'Hari ini';
+  if (t >= start.getTime() - 86_400_000) return 'Kemarin';
+  return 'Sebelumnya';
 }
 
 /** "9 hari lalu" */
@@ -60,23 +46,34 @@ export function ago(iso: string | null, now = Date.now()) {
   return `${Math.floor(m / 1440)} hari lalu`;
 }
 
-/** Notifikasi anggota: disusun dari pesanan, saldo penarikan, dan produk diskon. "Belum dibaca" = lebih baru dari waktu terakhir halaman dibuka (disimpan di perangkat). */
+/** Kotak masuk anggota dari server (status baca disimpan di server), ditambah promo diskon yang diturunkan dari katalog. */
 export function useNotifs(products: ShopProduct[]) {
-  const { me } = useSession();
-  const ord = useData<{ orders: OrderRow[] }>('/me/orders');
-  const rew = useData<Rewards>('/me/rewards');
-  const key = me ? `notif-seen-${me.sub}` : null;
-  const [seen, setSeen] = useState<number | null>(null);
-  useEffect(() => { if (key) SecureStore.getItemAsync(key).then((v) => setSeen(v ? Number(v) : 0), () => setSeen(0)); }, [key]);
-  const items = useMemo(() => buildNotifs(ord.data?.orders ?? [], rew.data, products), [ord.data, rew.data, products]);
-  const unread = (tab?: NotifTab) => (seen === null ? 0 : items.filter((n) => n.at && Date.parse(n.at) > seen && (!tab || n.tab === tab)).length);
-  const markSeen = useCallback(() => {
-    const t = Date.now();
-    setSeen(t);
-    if (key) SecureStore.setItemAsync(key, String(t)).catch(() => undefined);
-  }, [key]);
-  const { refetch: refetchOrders } = ord;
-  const { refetch: refetchRewards } = rew;
-  const refetch = useCallback(() => { void refetchOrders(); void refetchRewards(); }, [refetchOrders, refetchRewards]);
-  return { items, seen, unread, markSeen, refetch, loading: ord.isLoading || rew.isLoading, refreshing: ord.isRefetching || rew.isRefetching, error: (ord.error ?? rew.error) as Error | null };
+  const qc = useQueryClient();
+  const q = useData<Inbox>('/me/notifications');
+  const { refetch: refetchInbox } = q;
+  const items = useMemo<Notif[]>(() => {
+    const server = (q.data?.items ?? []).map((n) => ({ ...n, key: n.id }));
+    const promos = products.filter((p) => p.discountPct > 0).map<Notif>((p) => ({
+      key: `p${p.id}`, id: null, tab: 'info', cat: 'Promo', title: `Diskon ${p.discountPct}% ${p.name}`, body: `${p.name} kini ${rupiah(p.price)} (normal ${rupiah(p.listPrice)}). Belanja sebelum kehabisan.`,
+      at: null, read: true, route: 'product', refId: p.id,
+    }));
+    return [...server, ...promos];
+  }, [q.data, products]);
+  const unread = (tab?: NotifTab) => (tab ? q.data?.unread[tab] ?? 0 : (q.data?.unread.info ?? 0) + (q.data?.unread.trx ?? 0));
+
+  /** Tandai terbaca (tanpa `ids` = semua). Tampilan diperbarui lebih dulu, lalu disinkronkan ke server. */
+  const markRead = useCallback(async (ids?: string[]) => {
+    qc.setQueryData<Inbox>(['/me/notifications'], (d) => {
+      if (!d) return d;
+      const set = ids ? new Set(ids) : null;
+      const next = d.items.map((n) => (!n.read && (!set || set.has(n.id)) ? { ...n, read: true } : n));
+      const count = (tab: NotifTab) => next.filter((n) => n.tab === tab && !n.read).length;
+      return { items: next, unread: { info: count('info'), trx: count('trx') } };
+    });
+    try { await api('POST', '/me/notifications/read', ids ? { ids } : {}); }
+    catch { void refetchInbox(); }
+  }, [qc, refetchInbox]);
+
+  const refetch = useCallback(() => { void refetchInbox(); }, [refetchInbox]);
+  return { items, unread, markRead, refetch, loading: q.isLoading, refreshing: q.isRefetching, error: q.error as Error | null };
 }

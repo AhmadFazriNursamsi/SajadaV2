@@ -5,3 +5,5 @@ dist-web
 .env
 .expo
 *.tsbuildinfo
+google-services.json
+*-service-account*.json

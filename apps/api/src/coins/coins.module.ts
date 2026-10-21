@@ -133,6 +133,7 @@ export class CoinsService {
         await tx.update(vouchers).set({ stock: sql`${vouchers.stock} + 1` }).where(eq(vouchers.id, r.voucherId));
         await tx.insert(coinEntries).values({ tenantId: a.tid, memberId: r.memberId, kind: 'refund', amount: r.coins, refNo: r.no, note: `Penukaran ditolak: ${extra.reason}` });
       }
+      await this.core.notify(tx, { tenantId: a.tid, memberId: r.memberId, tab: 'info', cat: 'Koin', title: to === 'fulfilled' ? 'Voucher diterbitkan' : 'Penukaran voucher ditolak', body: to === 'fulfilled' ? `${r.no}: ${r.voucherName}${extra.code ? `, kode ${extra.code}` : ''}.` : `${r.no}: ${r.voucherName} ditolak (${extra.reason}). Koin dikembalikan.`, route: 'coins' });
       await this.core.audit(tx, a, to === 'fulfilled' ? `${r.no}: voucher ${r.voucherName} diterbitkan${extra.code ? ` (kode ${extra.code})` : ''}` : `${r.no}: penukaran voucher ${r.voucherName} ditolak (${extra.reason}); koin dikembalikan`);
       return { ok: true };
     });

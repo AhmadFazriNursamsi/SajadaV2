@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AppDownloadModule } from './app-download/app-download.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { CoinsModule } from './coins/coins.module';
 import { AvatarModule } from './avatar/avatar.module';
@@ -25,7 +26,7 @@ import { StockCountsModule } from './stock-counts/stock-counts.module';
 import { ReportsModule } from './reports/reports.module';
 
 @Module({
-  imports: [DbModule, CoreModule, AuthModule, MembersModule, AuditModule, CommissionPlanModule, DepotsModule, RegionsModule, InventoryModule, StockCountsModule, OrdersModule, ProcurementModule, FinanceModule, ReportsModule, OverviewModule, CentralModule, MeModule, AppDownloadModule, ProductMediaModule, AvatarModule, RewardsModule, CoinsModule, InvoicesModule],
+  imports: [DbModule, CoreModule, AuthModule, MembersModule, AuditModule, CommissionPlanModule, DepotsModule, RegionsModule, InventoryModule, StockCountsModule, OrdersModule, ProcurementModule, FinanceModule, ReportsModule, OverviewModule, CentralModule, MeModule, AppDownloadModule, ProductMediaModule, AvatarModule, RewardsModule, CoinsModule, InvoicesModule, NotificationsModule],
   controllers: [HealthController],
 })
 export class AppModule {}

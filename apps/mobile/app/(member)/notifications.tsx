@@ -1,22 +1,21 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C } from '../../src/theme';
 import { useShop } from '../../src/shopData';
 import { BackBar } from '../../src/shop';
-import { INFO_CATS, TRX_CATS, ago, useNotifs, type Notif, type NotifTab } from '../../src/notifData';
-
-const BLUE = C.green;
+import { INFO_CATS, TRX_CATS, ago, dayGroup, destination, iconOf, useNotifs, type Notif, type NotifTab } from '../../src/notifData';
 
 function Tabs({ tab, onTab, info, trx }: { tab: NotifTab; onTab: (t: NotifTab) => void; info: number; trx: number }) {
   const items: [NotifTab, string, number][] = [['info', 'Informasi', info], ['trx', 'Transaksi', trx]];
   return (
     <View style={s.tabs}>
       {items.map(([k, label, n]) => (
-        <Pressable key={k} onPress={() => onTab(k)} accessibilityRole="tab" accessibilityState={{ selected: tab === k }} style={[s.tab, tab === k && { borderBottomColor: BLUE }]}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: tab === k ? BLUE : C.muted }}>{label}</Text>
-          {n > 0 && <View style={s.badge}><Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{n}</Text></View>}
+        <Pressable key={k} onPress={() => onTab(k)} accessibilityRole="tab" accessibilityState={{ selected: tab === k }} style={[s.tab, tab === k && { borderBottomColor: C.green }]}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: tab === k ? C.green : C.muted }}>{label}</Text>
+          {n > 0 && <View style={s.badge}><Text style={{ color: '#ffffff', fontSize: 11, fontWeight: '700' }}>{n > 99 ? '99+' : n}</Text></View>}
         </Pressable>
       ))}
     </View>
@@ -25,27 +24,32 @@ function Tabs({ tab, onTab, info, trx }: { tab: NotifTab; onTab: (t: NotifTab) =
 
 function Chips({ cats, value, onPick }: { cats: string[]; value: string; onPick: (c: string) => void }) {
   const renderItem = useCallback(({ item: c }: { item: string }) => (
-    <Pressable onPress={() => onPick(c)} accessibilityRole="button" accessibilityState={{ selected: value === c }} style={[s.chip, value === c && { backgroundColor: BLUE }]}>
-      <Text style={{ fontSize: 15, fontWeight: '700', color: value === c ? '#ffffff' : BLUE }}>{c}</Text>
+    <Pressable onPress={() => onPick(c)} accessibilityRole="button" accessibilityState={{ selected: value === c }} style={[s.chip, value === c && { backgroundColor: C.green, borderColor: C.green }]}>
+      <Text style={{ fontSize: 13, fontWeight: '600', color: value === c ? '#ffffff' : C.ink }}>{c}</Text>
     </Pressable>
   ), [value, onPick]);
-  return <FlatList horizontal data={cats} keyExtractor={(c) => c} renderItem={renderItem} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, padding: 16 }} style={{ flexGrow: 0 }} />;
+  return <FlatList horizontal data={cats} keyExtractor={(c) => c} renderItem={renderItem} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 12 }} style={s.chips} />;
 }
 
-function Row({ n, isNew, onPress }: { n: Notif; isNew: boolean; onPress: () => void }) {
+function Row({ n, onPress }: { n: Notif; onPress: (n: Notif) => void }) {
+  const [icon, tone] = iconOf(n.cat);
+  const unread = !n.read;
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" style={[s.row, isNew && { backgroundColor: C.ok[0] }]}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={s.tag}>{n.cat}</Text>
-        <Text style={{ color: C.muted, fontSize: 13 }}>{ago(n.at)}</Text>
+    <Pressable onPress={() => onPress(n)} accessibilityRole="button" accessibilityLabel={`${unread ? 'Belum dibaca. ' : ''}${n.title}`} style={[s.row, unread && { backgroundColor: '#f1f8f5' }]}>
+      <View style={[s.icon, { backgroundColor: C[tone][0] }]}><Ionicons name={icon as never} size={22} color={C[tone][1]} /></View>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text numberOfLines={1} style={[s.title, unread && { fontWeight: '800' }]}>{n.title}</Text>
+          {n.at ? <Text style={s.time}>{ago(n.at)}</Text> : null}
+        </View>
+        <Text numberOfLines={2} style={s.body}>{n.body}</Text>
       </View>
-      <Text style={{ fontSize: 16, fontWeight: '700', color: C.ink, marginTop: 8 }}>{n.title}</Text>
-      <Text style={{ fontSize: 14, color: C.muted, marginTop: 4, lineHeight: 20 }}>{n.body}</Text>
+      {unread && <View style={s.dot} />}
     </Pressable>
   );
 }
 
-/** Notifikasi bergaya Klik Indomaret: tab Informasi/Transaksi, filter kategori, daftar kartu dengan waktu relatif. */
+/** Kotak masuk notifikasi: tab Informasi/Transaksi, filter kategori, dikelompokkan per hari, status baca tersimpan di server. */
 export default function Notifications() {
   const router = useRouter();
   const bottom = useSafeAreaInsets().bottom;
@@ -53,25 +57,42 @@ export default function Notifications() {
   const nf = useNotifs(shop.data?.products ?? []);
   const [tab, setTab] = useState<NotifTab>('info');
   const [cat, setCat] = useState('Semua');
-  // Penanda "baru" memakai waktu baca sebelum halaman dibuka; ditandai terbaca saat ditinggalkan.
-  const [opened, setOpened] = useState<number | null>(null);
-  useEffect(() => { if (opened === null && nf.seen !== null) setOpened(nf.seen); }, [opened, nf.seen]);
-  const { refetch, markSeen } = nf;
-  useFocusEffect(useCallback(() => { refetch(); return () => markSeen(); }, [refetch, markSeen]));
+  const { refetch, markRead } = nf;
+  useFocusEffect(useCallback(() => { refetch(); }, [refetch]));
   const cats = tab === 'info' ? INFO_CATS : TRX_CATS;
-  const list = nf.items.filter((n) => n.tab === tab && (cat === 'Semua' || n.cat === cat));
-  const renderItem = useCallback(({ item }: { item: Notif }) => <Row n={item} isNew={!!item.at && Date.parse(item.at) > (opened ?? Infinity)} onPress={() => router.push(item.to as never)} />,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [router, nf.items, opened]);
+  const sections = useMemo(() => {
+    const list = nf.items.filter((n) => n.tab === tab && (cat === 'Semua' || n.cat === cat));
+    const g = new Map<string, Notif[]>();
+    for (const n of list) g.set(dayGroup(n.at), [...(g.get(dayGroup(n.at)) ?? []), n]);
+    return ['Hari ini', 'Kemarin', 'Sebelumnya', 'Promo berjalan'].filter((k) => g.has(k)).map((title) => ({ title, data: g.get(title)! }));
+  }, [nf.items, tab, cat]);
+  const open = useCallback((n: Notif) => {
+    if (n.id && !n.read) void markRead([n.id]);
+    router.push(destination(n) as never);
+  }, [markRead, router]);
+  const renderItem = useCallback(({ item }: { item: Notif }) => <Row n={item} onPress={open} />, [open]);
+  const total = nf.unread();
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <BackBar title="Notifikasi" />
+      <BackBar title="Notifikasi">
+        <Pressable onPress={() => void markRead()} disabled={total === 0} hitSlop={10} accessibilityRole="button" accessibilityLabel="Tandai semua dibaca" style={{ opacity: total === 0 ? 0.35 : 1, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Ionicons name="checkmark-done-outline" size={20} color={C.green} />
+          <Text style={{ color: C.green, fontWeight: '700', fontSize: 13 }}>Tandai dibaca</Text>
+        </Pressable>
+      </BackBar>
       <Tabs tab={tab} onTab={(t) => { setTab(t); setCat('Semua'); }} info={nf.unread('info')} trx={nf.unread('trx')} />
       <Chips cats={cats} value={cat} onPick={setCat} />
       {nf.loading ? <ActivityIndicator color={C.green} style={{ marginTop: 40 }} /> : nf.error ? <Text style={{ color: C.bad[1], padding: 16 }}>Gagal memuat: {nf.error.message}</Text> : (
-        <FlatList data={list} keyExtractor={(n) => n.key} renderItem={renderItem} ListFooterComponent={<View style={{ height: bottom + 24 }} />}
+        <SectionList sections={sections} keyExtractor={(n) => n.key} renderItem={renderItem}
+          renderSectionHeader={({ section }) => <Text style={s.section}>{section.title}</Text>}
+          stickySectionHeadersEnabled={false}
+          ListFooterComponent={<View style={{ height: bottom + 24 }} />}
           refreshControl={<RefreshControl refreshing={nf.refreshing} onRefresh={nf.refetch} />}
-          ListEmptyComponent={<Text style={{ color: C.muted, textAlign: 'center', marginTop: 48 }}>Belum ada notifikasi</Text>} />
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', marginTop: 64, gap: 8 }}>
+              <Ionicons name="notifications-off-outline" size={44} color={C.line} />
+              <Text style={{ color: C.muted }}>Belum ada notifikasi</Text>
+            </View>} />
       )}
     </View>
   );
@@ -79,9 +100,15 @@ export default function Notifications() {
 
 const s = StyleSheet.create({
   tabs: { flexDirection: 'row', backgroundColor: C.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14, borderBottomWidth: 3, borderBottomColor: 'transparent' },
-  badge: { backgroundColor: BLUE, minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  chip: { backgroundColor: C.ok[0], borderRadius: 20, paddingHorizontal: 16, paddingVertical: 9 },
-  row: { backgroundColor: C.panel, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  tag: { color: BLUE, fontWeight: '700', fontSize: 14, backgroundColor: C.ok[0], borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3, overflow: 'hidden' },
+  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 13, borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  badge: { backgroundColor: C.gold, minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  chips: { flexGrow: 0, backgroundColor: C.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  chip: { backgroundColor: C.panel, borderRadius: 18, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, paddingVertical: 7 },
+  section: { fontSize: 12, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.panel, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  icon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  title: { flex: 1, fontSize: 15, fontWeight: '600', color: C.ink },
+  time: { fontSize: 12, color: C.muted },
+  body: { fontSize: 13, color: C.muted, marginTop: 3, lineHeight: 18 },
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.gold },
 });

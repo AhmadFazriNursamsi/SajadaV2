@@ -116,6 +116,7 @@ export class OrdersService {
     const [m] = await tx.select().from(members).where(eq(members.id, head.sellerId)).for('update');
     await tx.update(members).set({ rewardBalance: m!.rewardBalance + total }).where(eq(members.id, m!.id));
     await tx.insert(rewardEntries).values({ tenantId: head.tenantId, memberId: m!.id, kind: 'earn', amount: total, refNo: head.groupNo, note: `${REWARD_PERCENT}% dari belanja ${head.groupNo}` });
+    await this.core.notify(tx, { tenantId: head.tenantId, memberId: m!.id, tab: 'info', cat: 'Saldo', title: 'Saldo penarikan bertambah', body: `Kamu mendapat Rp${total.toLocaleString('id-ID')} dari belanja #${head.groupNo}.`, route: 'reward' });
     return total;
   }
 
@@ -131,6 +132,7 @@ export class OrdersService {
     const [m] = await tx.select().from(members).where(eq(members.id, head.sellerId)).for('update');
     await tx.update(members).set({ coinBalance: m!.coinBalance + total }).where(eq(members.id, m!.id));
     await tx.insert(coinEntries).values({ tenantId: head.tenantId, memberId: m!.id, kind: 'earn', amount: total, refNo: head.groupNo, note: `Koin dari belanja ${head.groupNo}` });
+    await this.core.notify(tx, { tenantId: head.tenantId, memberId: m!.id, tab: 'info', cat: 'Koin', title: 'Koin bertambah', body: `Kamu mendapat ${total.toLocaleString('id-ID')} koin dari belanja #${head.groupNo}.`, route: 'coins' });
     return total;
   }
 
@@ -155,8 +157,21 @@ export class OrdersService {
     return { seq, ...plan };
   }
 
-  private setAll(tx: Database, rows: Order[], values: Partial<typeof orders.$inferInsert>) {
-    return tx.update(orders).set(values).where(inArray(orders.id, rows.map((o) => o.id)));
+  /** Ubah semua baris satu pesanan; perubahan status penting dikabarkan ke anggota pemesan (kecuali bila ia sendiri pelakunya: `quiet`). */
+  private async setAll(tx: Database, rows: Order[], values: Partial<typeof orders.$inferInsert>, quiet = false) {
+    await tx.update(orders).set(values).where(inArray(orders.id, rows.map((o) => o.id)));
+    if (quiet) return;
+    const head = rows[0]!;
+    const v = values;
+    let ev: [string, string, string] | null = null; // [kategori, judul, isi]
+    if (v.cancelled) ev = ['Dibatalkan', 'Pesanan dibatalkan', v.cancelReason ?? 'Pesanan ini dibatalkan.'];
+    else if (v.received) ev = ['Selesai', 'Pesanan selesai', 'Terima kasih sudah belanja!'];
+    else if (v.shipped) ev = ['Berjalan', 'Pesanan dalam pengiriman', 'Pesananmu sedang dikirim. Konfirmasi saat barang diterima.'];
+    else if (v.approvedAt) ev = ['Berjalan', 'Pesanan disetujui', 'Toko menyetujui pesananmu dan sedang menyiapkannya.'];
+    else if (v.pay === 'balance' || v.pay === 'cash') ev = ['Berjalan', 'Pembayaran diterima', 'Pembayaran pesananmu sudah diterima.'];
+    if (!ev) return;
+    const total = groupTotal(rows);
+    await this.core.notify(tx, { tenantId: head.tenantId, memberId: head.sellerId, tab: 'trx', cat: ev[0], title: ev[1], body: `#${head.groupNo} · Rp${total.toLocaleString('id-ID')}. ${ev[2]}`, route: 'orders', refId: head.groupId });
   }
 
   private needApproved(rows: Order[]) {
@@ -260,7 +275,7 @@ export class OrdersService {
       let autoReceived = false;
       if (rows.some((o) => !o.received)) {
         const [mem] = await tx.select({ name: members.name }).from(members).where(eq(members.id, memberId));
-        await this.setAll(tx, rows, { received: true, receivedAt: new Date(), proofRef: `CEK-${head.groupNo}`, receiverName: mem?.name ?? 'Anggota' });
+        await this.setAll(tx, rows, { received: true, receivedAt: new Date(), proofRef: `CEK-${head.groupNo}`, receiverName: mem?.name ?? 'Anggota' }, true);
         autoReceived = true;
         const earned = await this.creditReward(tx, rows);
         if (earned) await this.core.audit(tx, a, `${head.groupNo}: saldo penarikan anggota bertambah Rp${earned.toLocaleString('id-ID')} (${REWARD_PERCENT}%)`);

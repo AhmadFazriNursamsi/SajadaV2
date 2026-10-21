@@ -11,7 +11,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://sajadah.devoutsys.com"
-      }
+      },
+      "environment": "production"
     }
   }
 }

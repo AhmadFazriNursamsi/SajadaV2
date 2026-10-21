@@ -3,6 +3,7 @@ import { Platform, type ColorValue } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, Tabs } from 'expo-router';
 import { useCart } from '../../src/cart';
+import { usePush } from '../../src/push';
 import { useSession } from '../../src/session';
 import { C } from '../../src/theme';
 
@@ -14,6 +15,7 @@ const HIDDEN = ['reward', 'products', 'product', 'checkout', 'check', 'order', '
 export default function MemberTabs() {
   const { me, ready } = useSession();
   const { count } = useCart();
+  usePush(ready && !!me);
   if (ready && !me) return <Redirect href="/login" />;
   return (
     <Tabs backBehavior="history" screenOptions={{ headerStyle: { backgroundColor: C.side }, headerTintColor: '#ffffff', tabBarActiveTintColor: C.green, ...(Platform.OS === 'web' && { tabBarStyle: { height: 64, paddingBottom: 8 } }) }}>
