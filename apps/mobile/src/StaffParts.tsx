@@ -25,10 +25,11 @@ export function StaffHeader({ title, subtitle, bell, children }: { title: string
   const top = useSafeAreaInsets().top;
   return (
     <View style={[s.header, { paddingTop: top + 14 }]}>
-      {bell && <View style={{ position: 'absolute', right: 16, top: top + 12 }}><StaffBell /></View>}
       <Text style={{ color: '#ffffff', fontSize: 22, fontWeight: '700', paddingRight: bell ? 44 : 0 }} numberOfLines={1}>{title}</Text>
       {subtitle ? <Text style={{ color: '#ffffff', opacity: 0.85, fontSize: 14, marginTop: 2 }} numberOfLines={1}>{subtitle}</Text> : null}
       {children}
+      {/* Terakhir dirender agar berada di atas judul dan tetap bisa diketuk. */}
+      {bell && <View style={{ position: 'absolute', right: 16, top: top + 12, zIndex: 2, elevation: 2 }}><StaffBell /></View>}
     </View>
   );
 }
