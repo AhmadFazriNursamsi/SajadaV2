@@ -8,8 +8,6 @@ import { ZodPipe } from '../common/zod.pipe';
 import { CurrentActor, Roles } from '../auth/auth.decorators';
 import type { Actor } from '../auth/auth.types';
 
-/** Harus sama dengan CHANNEL_ID di aplikasi (apps/mobile/src/push.ts). */
-const CHANNEL_ID = 'sajadah-v2';
 const readSchema = z.object({ ids: z.array(z.string().uuid()).max(200).optional() });
 const tokenSchema = z.object({ token: z.string().regex(/^(Expo|Exponent)PushToken\[[^\]]{8,}\]$/, 'Token push tidak valid') });
 
@@ -78,7 +76,8 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       if (!fresh.length) return;
       const mids = [...new Set(fresh.flatMap((n) => (n.memberId ? [n.memberId] : [])))], uids = [...new Set(fresh.flatMap((n) => (n.userId ? [n.userId] : [])))];
       const tokens = await this.db.select().from(pushTokens).where(or(mids.length ? inArray(pushTokens.memberId, mids) : undefined, uids.length ? inArray(pushTokens.userId, uids) : undefined));
-      const messages = fresh.flatMap((n) => tokens.filter((t) => (n.memberId ? t.memberId === n.memberId : t.userId === n.userId)).map((t) => ({ to: t.token, title: n.title, body: n.body, sound: 'default', channelId: CHANNEL_ID, data: { route: n.route, refId: n.refId, id: n.id } })));
+      // Tanpa channelId: Expo tidak menampilkan notifikasi bila saluran yang disebut belum ada di HP (mis. APK lama), jadi saluran dibiarkan ditentukan HP.
+      const messages = fresh.flatMap((n) => tokens.filter((t) => (n.memberId ? t.memberId === n.memberId : t.userId === n.userId)).map((t) => ({ to: t.token, title: n.title, body: n.body, sound: 'default', data: { route: n.route, refId: n.refId, id: n.id } })));
       if (messages.length) {
         const res = await fetch('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(messages) });
         if (!res.ok) { this.log.warn(`Push gagal (${res.status}); dicoba lagi.`); return; }

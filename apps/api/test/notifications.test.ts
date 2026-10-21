@@ -104,7 +104,8 @@ describe('Pengiriman push', () => {
       const toMember = sent.filter((m) => m.to.includes('anggota'));
       expect(toStaff.map((m) => m.title)).toContain('Pesanan baru menunggu persetujuan');
       expect(toMember.map((m) => m.title)).toContain('Pesanan disetujui');
-      expect(toStaff[0]).toMatchObject({ channelId: 'sajadah-v2', data: { route: 'staff-orders' } });
+      expect(toStaff[0]).toMatchObject({ data: { route: 'staff-orders' } });
+      expect(toStaff[0]).not.toHaveProperty('channelId');
       const n = sent.length;
       await push.flush();
       expect(sent.length).toBe(n); // sudah terkirim, tidak diulang
