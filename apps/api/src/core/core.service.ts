@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Database } from '../db/db';
 import { COMMISSION_RATES } from '@sajadah/shared';
 import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockMovements, users } from '../db/schema';
@@ -19,9 +19,9 @@ export class CoreService {
     await q.insert(notifications).values({ tenantId: n.tenantId, memberId: n.memberId, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId ?? null });
   }
 
-  /** Kabari semua petugas yang bertugas di toko itu. */
+  /** Kabari petugas yang bertugas di toko itu, serta pengurus (admin memantau semua toko). */
   async notifyDepotStaff(q: Q, n: StaffNotifyInput) {
-    const staff = await q.select({ id: users.id }).from(users).where(and(eq(users.tenantId, n.tenantId), eq(users.role, 'staff'), eq(users.depotId, n.depotId)));
+    const staff = await q.select({ id: users.id }).from(users).where(and(eq(users.tenantId, n.tenantId), or(eq(users.role, 'tenant_admin'), and(eq(users.role, 'staff'), eq(users.depotId, n.depotId)))));
     if (!staff.length) return;
     await q.insert(notifications).values(staff.map((u) => ({ tenantId: n.tenantId, userId: u.id, tab: n.tab, cat: n.cat, title: n.title, body: n.body, route: n.route, refId: n.refId ?? null })));
   }

@@ -1,6 +1,7 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client, as, boot } from './helpers';
+import { PushService } from '../src/notifications/notifications.module';
 
 let app: NestFastifyApplication;
 let admin: Client, staff: Client, member: Client;
@@ -17,7 +18,7 @@ afterAll(() => app.close());
 const inbox = async () => (await member.get('/me/notifications')).body;
 
 describe('Notifikasi petugas toko', () => {
-  it('pesanan baru dan pembayaran masuk kotak masuk petugas toko; admin tidak punya kotak masuk', async () => {
+  it('pesanan baru dan pembayaran masuk kotak masuk petugas toko dan pengurus (admin)', async () => {
     const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 1 }] });
     const inbox = async () => (await staff.get('/me/notifications')).body;
     const n = await inbox();
@@ -27,7 +28,10 @@ describe('Notifikasi petugas toko', () => {
     await staff.post(`/orders/${placed.body[0].id}/approve`);
     expect((await staff.post('/me/notifications/read', {})).status).toBe(201);
     expect((await inbox()).unread).toEqual({ info: 0, trx: 0 });
-    expect((await admin.get('/me/notifications')).status).toBe(403);
+    const adm = (await admin.get('/me/notifications')).body;
+    expect(adm.items.some((x: any) => x.title === 'Pesanan baru menunggu persetujuan')).toBe(true);
+    expect((await admin.post('/me/push-token', { token: 'ExponentPushToken[pengurus-abcdefgh]' })).status).toBe(201);
+    expect((await member.get('/me/notifications')).body.items.some((x: any) => x.title === 'Pesanan baru menunggu persetujuan')).toBe(false);
     expect((await staff.post('/me/push-token', { token: 'ExponentPushToken[petugas-abcdefgh]' })).status).toBe(201);
   });
 });
@@ -68,7 +72,10 @@ describe('Notifikasi anggota', () => {
     await member.post('/me/notifications/read', {});
     const after = await inbox();
     expect(after.unread).toEqual({ info: 0, trx: 0 });
-    expect((await admin.get('/me/notifications')).status).toBe(403);
+    const adm = (await admin.get('/me/notifications')).body;
+    expect(adm.items.some((x: any) => x.title === 'Pesanan baru menunggu persetujuan')).toBe(true);
+    expect((await admin.post('/me/push-token', { token: 'ExponentPushToken[pengurus-abcdefgh]' })).status).toBe(201);
+    expect((await member.get('/me/notifications')).body.items.some((x: any) => x.title === 'Pesanan baru menunggu persetujuan')).toBe(false);
     expect((await member.post('/me/notifications/read', { ids: ['bukan-uuid'] })).status).toBe(400);
   });
 
@@ -76,5 +83,31 @@ describe('Notifikasi anggota', () => {
     expect((await member.post('/me/push-token', { token: 'asal' })).status).toBe(400);
     expect((await member.post('/me/push-token', { token: 'ExponentPushToken[abcdefghijklmnop]' })).status).toBe(201);
     expect((await member.post('/me/push-token', { token: 'ExponentPushToken[abcdefghijklmnop]' })).status).toBe(201);
+  });
+});
+
+describe('Pengiriman push', () => {
+  it('notifikasi anggota dan petugas dikirim ke token masing-masing lewat Expo, sekali saja', async () => {
+    await member.post('/me/push-token', { token: 'ExponentPushToken[anggota-abcdefgh]' });
+    await staff.post('/me/push-token', { token: 'ExponentPushToken[petugas-abcdefgh]' });
+    const push = app.get(PushService);
+    const sent: any[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (_u: any, init: any) => { const b = JSON.parse(init.body); sent.push(...b); return new Response(JSON.stringify({ data: b.map(() => ({ status: 'ok' })) }), { status: 200 }); }) as any;
+    try {
+      await push.flush(); // kosongkan antrean dari tes sebelumnya
+      sent.length = 0;
+      const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 1 }] });
+      await staff.post(`/orders/${placed.body[0].id}/approve`);
+      await push.flush();
+      const toStaff = sent.filter((m) => m.to.includes('petugas'));
+      const toMember = sent.filter((m) => m.to.includes('anggota'));
+      expect(toStaff.map((m) => m.title)).toContain('Pesanan baru menunggu persetujuan');
+      expect(toMember.map((m) => m.title)).toContain('Pesanan disetujui');
+      expect(toStaff[0]).toMatchObject({ channelId: 'sajadah-v2', data: { route: 'staff-orders' } });
+      const n = sent.length;
+      await push.flush();
+      expect(sent.length).toBe(n); // sudah terkirim, tidak diulang
+    } finally { globalThis.fetch = real; }
   });
 });

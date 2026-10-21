@@ -20,7 +20,7 @@ export class NotificationsService {
   /** Pemilik kotak masuk: anggota (lewat memberId) atau petugas (lewat userId). */
   private owner(a: Actor) {
     if (a.mid) return { member: a.mid, user: null };
-    if (a.role === 'staff') return { member: null, user: a.sub };
+    if (a.role === 'staff' || a.role === 'tenant_admin') return { member: null, user: a.sub };
     throw new ForbiddenException('Akun ini tidak memiliki notifikasi');
   }
   private mine(a: Actor) {
@@ -82,7 +82,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       if (messages.length) {
         const res = await fetch('https://exp.host/--/api/v2/push/send', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(messages) });
         if (!res.ok) { this.log.warn(`Push gagal (${res.status}); dicoba lagi.`); return; }
-        const out = (await res.json()) as { data?: { status: string; details?: { error?: string } }[] };
+        const out = (await res.json()) as { data?: { status: string; message?: string; details?: { error?: string } }[] };
+        const failed = (out.data ?? []).filter((d) => d.status !== 'ok');
+        this.log.log(`Push: ${messages.length - failed.length} diterima Expo, ${failed.length} ditolak${failed.length ? ` (${failed.map((d) => d.details?.error ?? d.message ?? d.status).join('; ')})` : ''}`);
         // Token yang sudah tidak terdaftar dibuang.
         const dead = (out.data ?? []).flatMap((d, i) => (d.details?.error === 'DeviceNotRegistered' ? [messages[i]!.to] : []));
         if (dead.length) await this.db.delete(pushTokens).where(inArray(pushTokens.token, dead));
@@ -97,9 +99,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
 @Controller()
 class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
-  @Get('me/notifications') @Roles('member', 'staff') list(@CurrentActor() a: Actor) { return this.svc.list(a); }
-  @Post('me/notifications/read') @Roles('member', 'staff') read(@CurrentActor() a: Actor, @Body(new ZodPipe(readSchema)) b: z.infer<typeof readSchema>) { return this.svc.markRead(a, b.ids); }
-  @Post('me/push-token') @Roles('member', 'staff') token(@CurrentActor() a: Actor, @Body(new ZodPipe(tokenSchema)) b: z.infer<typeof tokenSchema>) { return this.svc.saveToken(a, b.token); }
+  @Get('me/notifications') @Roles('member', 'staff', 'tenant_admin') list(@CurrentActor() a: Actor) { return this.svc.list(a); }
+  @Post('me/notifications/read') @Roles('member', 'staff', 'tenant_admin') read(@CurrentActor() a: Actor, @Body(new ZodPipe(readSchema)) b: z.infer<typeof readSchema>) { return this.svc.markRead(a, b.ids); }
+  @Post('me/push-token') @Roles('member', 'staff', 'tenant_admin') token(@CurrentActor() a: Actor, @Body(new ZodPipe(tokenSchema)) b: z.infer<typeof tokenSchema>) { return this.svc.saveToken(a, b.token); }
 }
 
 @Module({ controllers: [NotificationsController], providers: [NotificationsService, PushService] })
