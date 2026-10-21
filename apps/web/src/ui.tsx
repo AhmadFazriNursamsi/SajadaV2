@@ -63,6 +63,11 @@ interface FieldProps {
 function FieldControl({ value, onChange, ph, type = 'text', options, id, focus, onEnter, error }: FieldProps) {
   const af = focus ? '' : undefined;
   if (options) return <select id={id} value={value} data-autofocus={af} onChange={(e) => onChange(e.target.value)}>{options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
+  if (type === 'rupiah') {
+    const digits = value.replace(/\D/g, '');
+    return <input id={id} type="text" inputMode="numeric" value={digits ? Number(digits).toLocaleString('id-ID') : ''} placeholder={ph ?? '0'} data-autofocus={af}
+      onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))} onKeyDown={onEnter ? (e) => { if (e.key === 'Enter') { e.preventDefault(); onEnter(); } } : undefined} />;
+  }
   if (type === 'textarea') return <textarea id={id} rows={4} value={value} placeholder={ph} data-autofocus={af} onChange={(e) => onChange(e.target.value)} />;
   return (
     <input id={id} type={type} value={value} placeholder={ph} data-autofocus={af} aria-invalid={error ? true : undefined}

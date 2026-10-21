@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Badge, Block, Btn, Field, Fields, Gate, Modal, PageHead, Table } from '../ui';
-import { R, useAct, useData, useForm } from '../hooks';
+import { useEffect, useMemo, useState } from 'react';
+import { Badge, Block, Btn, Combobox, Field, Fields, Gate, Modal, PageHead, Table } from '../ui';
+import { R, useAct, useData, useForm, useToast } from '../hooks';
+import { ApiError, api } from '../api';
+import { useQueryClient } from '@tanstack/react-query';
 import { imageSrc, resizeToJpeg } from '../image';
 import type { CentralRow } from '../types';
 
@@ -39,8 +41,49 @@ function PhotoField({ p }: { p: CentralRow }) {
   );
 }
 
+/** Foto untuk produk yang belum dibuat: disimpan dulu di dialog, diunggah setelah produk tersimpan. */
+function NewPhotoField({ file, onPick }: { file: File | null; onPick: (f: File | null) => void }) {
+  const [err, setErr] = useState('');
+  const preview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  return (
+    <div className="photo">
+      {preview ? <img className="thumb thumb-lg" src={preview} alt="Pratinjau foto" /> : <div className="thumb thumb-lg" />}
+      <label className="field">Foto produk (opsional)
+        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; setErr(f && !f.type.startsWith('image/') ? 'Berkas bukan gambar.' : ''); onPick(f && f.type.startsWith('image/') ? f : null); }} />
+        <span className="hint-sm">{err || 'Tampil di toko anggota. Otomatis dikecilkan.'}</span>
+      </label>
+    </div>
+  );
+}
+
 /** Dialog produk baru / ubah. Dipasang hanya saat terbuka, jadi isian selalu mulai dari nilai produk yang dipilih. */
-function ProductDialog({ p, onClose }: { p: CentralRow | null; onClose: () => void }) {
+const NEW_CATEGORY = '__baru__';
+const DEFAULT_CATEGORIES = ['Makanan', 'Minuman', 'Sembako', 'Kebutuhan rumah', 'Perawatan diri'];
+
+/** Kategori: pilih dari yang sudah dipakai produk lain (plus beberapa bawaan), atau buat baru. */
+function CategoryField({ value, onChange, known }: { value: string; onChange: (v: string) => void; known: string[] }) {
+  const names = useMemo(() => {
+    // satu entri per nama tanpa membedakan huruf besar/kecil; ejaan dengan huruf kapital di awal diutamakan
+    const byKey = new Map<string, string>();
+    for (const n of [...DEFAULT_CATEGORIES, ...known, ...(value ? [value] : [])]) {
+      const k = n.trim().toLowerCase();
+      if (k && (!byKey.has(k) || (n[0] === n[0]!.toUpperCase() && byKey.get(k)![0] !== byKey.get(k)![0]!.toUpperCase()))) byKey.set(k, n.trim());
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b, 'id'));
+  }, [known, value]);
+  const [custom, setCustom] = useState(false);
+  const options = [{ value: '', label: '(Tanpa kategori)' }, ...names.map((n) => ({ value: n, label: n })), { value: NEW_CATEGORY, label: '+ Kategori baru…' }];
+  return (
+    <>
+      <Combobox label="Kategori (tampil di toko anggota)" value={custom ? NEW_CATEGORY : value} placeholder="Pilih kategori…" options={options}
+        onChange={(v) => { if (v === NEW_CATEGORY) { setCustom(true); onChange(''); } else { setCustom(false); onChange(v); } }} />
+      {custom && <Field label="Nama kategori baru" value={value} onChange={onChange} ph="mis. Makanan beku" focus />}
+    </>
+  );
+}
+
+function ProductDialog({ p, known, onClose }: { p: CentralRow | null; known: string[]; onClose: () => void }) {
   const act = useAct();
   const f = useForm({ name: p?.name ?? '', sku: '', sell: p ? String(p.sellPrice) : '', safety: p ? String(p.safety) : '5', target: p ? String(p.target) : '20', category: p?.category ?? '', description: p?.description ?? '', list: p?.listPrice ? String(p.listPrice) : '', coins: p ? String(p.coins) : '0' });
   const sell = num(f.v.sell), safety = num(f.v.safety), target = num(f.v.target);
@@ -48,26 +91,43 @@ function ProductDialog({ p, onClose }: { p: CentralRow | null; onClose: () => vo
   const problem = problemOf(f.v, sell, safety, target, list);
   const name = f.v.name.trim();
   const body = { name, sellPrice: sell, safety, target, category: f.v.category.trim(), description: f.v.description.trim(), listPrice: list, coins: num(f.v.coins) };
-  const save = () => (p
-    ? act.run('PATCH', `/central/products/${p.id}`, `${name} diperbarui`, body, onClose)
-    : act.post('/central/products', `Produk ${name} dibuat`, { ...body, sku: f.v.sku.trim() || undefined }, onClose));
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [creating, setCreating] = useState(false);
+  const create = async () => {
+    setCreating(true);
+    try {
+      const made = await api<{ id: string }>('POST', '/central/products', { ...body, sku: f.v.sku.trim() || undefined });
+      let note = `Produk ${name} dibuat`;
+      if (photo) {
+        try { await api('POST', `/central/products/${made.id}/image`, { contentType: 'image/jpeg', data: await resizeToJpeg(photo) }); }
+        catch { note += ', tetapi foto gagal diunggah — tambahkan lewat Ubah…'; }
+      }
+      toast(note);
+      void qc.invalidateQueries();
+      onClose();
+    } catch (e) { toast(e instanceof ApiError ? e.message : 'Terjadi kesalahan', false); }
+    finally { setCreating(false); }
+  };
+  const save = () => (p ? act.run('PATCH', `/central/products/${p.id}`, `${name} diperbarui`, body, onClose) : void create());
   return (
     <Modal title={p ? `Ubah produk — ${p.name}` : 'Produk baru'} open onClose={onClose} footer={<>
       <Btn kind="g" onClick={onClose}>Batal</Btn>
-      <Btn disabled={act.busy || !!problem} onClick={save}>{p ? 'Simpan perubahan' : 'Buat produk'}</Btn>
+      <Btn disabled={act.busy || creating || !!problem} onClick={save}>{p ? 'Simpan perubahan' : 'Buat produk'}</Btn>
     </>}>
       <Fields>
         <Field {...f.bind('name', 'Nama produk', 'mis. Produk baru')} focus />
         {p ? <Field label="SKU" value={p.sku} onChange={() => undefined} hint="Tidak bisa diubah" /> : <Field {...f.bind('sku', 'SKU (opsional)', 'otomatis, mis. PRD-04')} />}
-        <Field {...f.bind('sell', 'Harga jual (Rp)')} type="number" />
+        <Field {...f.bind('sell', 'Harga jual (Rp)', 'mis. 10.000')} type="rupiah" />
         <Field {...f.bind('safety', 'Stok aman')} type="number" hint="Di bawah ini produk dianggap menipis" />
         <Field {...f.bind('target', 'Target stok')} type="number" hint="Dipakai menghitung kebutuhan beli" />
-        <Field {...f.bind('category', 'Kategori (tampil di toko anggota)', 'mis. Makanan')} />
-        <Field {...f.bind('list', 'Harga normal (Rp, opsional)')} type="number" hint="Dicoret di toko bila diisi dan di atas harga jual" />
+        <CategoryField value={f.v.category} onChange={(v) => f.set('category', v)} known={known} />
+        <Field {...f.bind('list', 'Harga normal (Rp, opsional)', 'mis. 12.000')} type="rupiah" hint="Dicoret di toko bila diisi dan di atas harga jual" />
         <Field {...f.bind('coins', 'Koin per produk')} type="number" hint="Koin yang didapat anggota tiap produk, saat belanja sendiri sudah diterima" />
         <Field {...f.bind('description', 'Deskripsi produk')} type="textarea" />
       </Fields>
-      {p && <PhotoField p={p} />}
+      {p ? <PhotoField p={p} /> : <NewPhotoField file={photo} onPick={setPhoto} />}
       <ProblemNote problem={problem} />
     </Modal>
   );
@@ -95,6 +155,7 @@ type Dialog = { p: CentralRow | null } | null;
 export default function ProductsPage() {
   const q = useData<CentralRow[]>('/central/stock');
   const [dlg, setDlg] = useState<Dialog>(null);
+  const categories = useMemo(() => [...new Set((q.data ?? []).map((x) => x.category?.trim()).filter((c): c is string => !!c))], [q.data]);
   return (
     <>
       <PageHead title="Produk" desc="Daftar produk koperasi. Produk baru langsung tersedia di semua toko dengan stok 0; isi stoknya lewat Persediaan → Pengiriman (barang masuk ke pusat), lalu kirim ke toko." />
@@ -105,7 +166,7 @@ export default function ProductsPage() {
           </Block>
         </Gate>
       </div>
-      {dlg && <ProductDialog key={dlg.p?.id ?? 'baru'} p={dlg.p} onClose={() => setDlg(null)} />}
+      {dlg && <ProductDialog key={dlg.p?.id ?? 'baru'} p={dlg.p} known={categories} onClose={() => setDlg(null)} />}
     </>
   );
 }

@@ -175,7 +175,7 @@ function FundDialog({ m, invs, fundedCount, onClose }: { m: MemberRow; invs: Fun
         <Field label="Tanggal pendanaan" type="date" value={f.v.date} onChange={(v) => f.set('date', v)} />
       </div>
       {invs.length === 0
-        ? <p className="note" role="alert">Belum ada investor. Tambahkan dulu di halaman <Link to="/investor" onClick={onClose}>Dashboard investor</Link>.</p>
+        ? <p className="note" role="alert">Data investor sedang dimuat. Tutup dialog ini lalu buka lagi; bila tetap kosong, periksa di <Link to="/investor" onClick={onClose}>Dashboard investor</Link>.</p>
         : <>
             {invs.map((i) => <Field key={i.id} label={`Dari ${i.name} (porsi acuan ${i.sharePercent}%) — Rp`} type="number" value={alloc[i.id] ?? ''} onChange={(v) => setAlloc((s) => ({ ...s, [i.id]: v }))} />)}
             <div className="alloc-total">Total dialokasikan <Badge tone={exact ? 'ok' : 'bad'}>{R(total)}</Badge>{!exact && <span> — kurang/lebih {R(Math.abs(PARTICIPATION_TOTAL - total))} dari {R(PARTICIPATION_TOTAL)}</span>}</div>

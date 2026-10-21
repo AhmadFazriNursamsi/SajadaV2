@@ -60,7 +60,14 @@ export class ReportsService {
   }
 
   /** Master investor + alokasi penyertaan per anggota (nilai nyata dari tabel alokasi). */
+  /** Koperasi tanpa investor: pengurus sendiri dianggap investor tunggal (porsi 100%), agar modal awal bisa langsung dicatat. */
+  private async ensureDefaultInvestor(tid: string) {
+    const [any] = await this.db.select({ id: investors.id }).from(investors).where(eq(investors.tenantId, tid)).limit(1);
+    if (!any) await this.db.insert(investors).values({ tenantId: tid, code: 'ADMIN', name: 'Admin', sharePercent: 100 }).onConflictDoNothing();
+  }
+
   async funding(tid: string) {
+    await this.ensureDefaultInvestor(tid);
     const [inv, ms, allocs] = await Promise.all([
       this.db.select().from(investors).where(eq(investors.tenantId, tid)).orderBy(investors.code),
       this.db.select().from(members).where(eq(members.tenantId, tid)),
