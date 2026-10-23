@@ -141,6 +141,17 @@ Cara kerjanya:
 - Tanpa `EXPO_TOKEN`, langkah APK dilewati dengan peringatan dan image server tetap dibangun.
 - Cadangan manual: letakkan berkas di server dan set `APK_PATH=/data/apk/sajadah.apk` di `.env` (menimpa APK di dalam image).
 
+### Update otomatis (Watchtower)
+
+`docker-compose.yml` menyertakan container `sajadah-watchtower`. Ia mengecek GHCR tiap 5 menit dan, bila ada image `latest` baru,
+menarik lalu memulai ulang **hanya** container `sajadah` (berlabel `com.centurylinklabs.watchtower.enable=true`); container lain di server tidak disentuh.
+Jadi alurnya: `git push` → Actions membangun image (dan APK bila perlu) → server memperbarui diri dalam ±5 menit setelah image terkirim.
+
+- Aktifkan sekali: `docker compose up -d` (menjalankan Watchtower). Cek: `docker compose logs -f watchtower`.
+- Package GHCR private: login di server (`docker login ghcr.io`), lalu aktifkan baris volume `config.json` di compose.
+- Bila update tidak ingin otomatis, hentikan: `docker compose stop watchtower` (lalu pakai `docker compose pull && docker compose up -d` manual).
+- Migrasi database tidak punya langkah mundur dan ikut berjalan otomatis: pastikan cadangan harian berjalan.
+
 ## 7. Update, rollback, cadangan
 
 - **Update:** `docker compose pull && docker compose up -d`. Migrasi baru berjalan otomatis dan **tidak punya langkah mundur**: cadangkan database dulu.

@@ -6,6 +6,8 @@ services:
     container_name: sajadah
     restart: unless-stopped
     env_file: .env
+    labels:
+      - com.centurylinklabs.watchtower.enable=true   # hanya container berlabel ini yang diperbarui Watchtower
     ports:
       - "127.0.0.1:3000:3000"   # hanya bisa diakses reverse proxy di server yang sama
     volumes:
@@ -19,3 +21,23 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "5" }
+
+  # Memperbarui container sajadah sendiri bila ada image baru di GHCR (tag "latest"), tanpa menyentuh container lain di server.
+  # Migrasi database berjalan otomatis tiap container dimulai ulang: pastikan cadangan database harian sudah berjalan.
+  watchtower:
+    image: nickfedor/watchtower:latest      # fork Watchtower yang masih dipelihara (kompatibel dengan Docker terbaru)
+    container_name: sajadah-watchtower
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"       # hanya container berlabel watchtower.enable=true
+      WATCHTOWER_POLL_INTERVAL: "300"       # cek GHCR tiap 5 menit
+      WATCHTOWER_CLEANUP: "true"            # hapus image lama setelah diperbarui
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      DOCKER_CONFIG: /config                # kredensial GHCR bila package private (lihat catatan di bawah)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Bila package GHCR PRIVATE: login sekali di server (docker login ghcr.io) lalu aktifkan baris ini.
+      # - ${HOME}/.docker/config.json:/config/config.json:ro
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
