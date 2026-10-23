@@ -123,6 +123,15 @@ npx eas-cli build --platform android --profile apk
 
 Naikkan `version`/`android.versionCode` di `app.json` tiap rilis baru.
 
+Letakkan APK di server agar bisa diunduh dari web admin (menu **Aplikasi HP**, QR/tautan `/api/app/sajadah.apk`):
+
+```bash
+# di .env server (sekali): APK_PATH=/data/apk/sajadah.apk   lalu: docker compose up -d
+mkdir -p data/apk
+curl -L -o data/apk/sajadah.apk "URL_UNDUHAN_APK_DARI_HALAMAN_BUILD_EXPO"   # atau scp dari komputer Anda
+chown 1000:1000 data/apk/sajadah.apk
+```
+
 ## 7. Update, rollback, cadangan
 
 - **Update:** `docker compose pull && docker compose up -d`. Migrasi baru berjalan otomatis dan **tidak punya langkah mundur**: cadangkan database dulu.
