@@ -123,14 +123,23 @@ npx eas-cli build --platform android --profile apk
 
 Naikkan `version`/`android.versionCode` di `app.json` tiap rilis baru.
 
-Letakkan APK di server agar bisa diunduh dari web admin (menu **Aplikasi HP**, QR/tautan `/api/app/sajadah.apk`):
+### APK otomatis (tanpa langkah manual di server)
 
-```bash
-# di .env server (sekali): APK_PATH=/data/apk/sajadah.apk   lalu: docker compose up -d
-mkdir -p data/apk
-curl -L -o data/apk/sajadah.apk "URL_UNDUHAN_APK_DARI_HALAMAN_BUILD_EXPO"   # atau scp dari komputer Anda
-chown 1000:1000 data/apk/sajadah.apk
-```
+GitHub Actions membangun APK lewat EAS dan menyisipkannya ke image server, jadi `docker compose pull && docker compose up -d`
+sekaligus memperbarui APK yang diunduh dari web admin (menu **Aplikasi HP**, QR/tautan `/api/app/sajadah.apk`).
+
+Pengaturan sekali saja:
+
+1. expo.dev → **Account settings → Access tokens → Create token**. Salin tokennya.
+2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**: nama `EXPO_TOKEN`, isi token tadi.
+3. Jalankan pertama kali manual: tab **Actions → Build & push image → Run workflow**. Build EAS memakan ±10–20 menit.
+
+Cara kerjanya:
+- APK dibangun ulang hanya bila `apps/mobile` atau `packages/shared` berubah, saat tag `v*`, saat dijalankan manual, atau bila belum ada APK.
+- `versionCode` dinaikkan otomatis di CI (100 + nomor run), jadi APK baru selalu bisa menimpa yang terpasang. Tanda tangan tetap sama karena memakai kredensial yang disimpan EAS.
+- Hasilnya disimpan sebagai rilis GitHub `apk-latest` lalu disalin ke image di `/opt/apk/sajadah.apk`.
+- Tanpa `EXPO_TOKEN`, langkah APK dilewati dengan peringatan dan image server tetap dibangun.
+- Cadangan manual: letakkan berkas di server dan set `APK_PATH=/data/apk/sajadah.apk` di `.env` (menimpa APK di dalam image).
 
 ## 7. Update, rollback, cadangan
 

@@ -29,11 +29,97 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm test
 
+  # APK perlu dibangun ulang hanya bila aplikasi mobile atau paket bersama berubah (hemat kuota build EAS),
+  # saat dijalankan manual, saat tag rilis, atau bila belum pernah ada APK.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.f.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          build() { echo "mobile=true" >> "$GITHUB_OUTPUT"; echo "Build APK: $1"; exit 0; }
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && build "dijalankan manual"
+          [[ "${{ github.ref }}" == refs/tags/* ]] && build "tag rilis"
+          gh release view apk-latest >/dev/null 2>&1 || build "belum ada APK sebelumnya"
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then build "pembanding tidak tersedia"; fi
+          if git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qE '^(apps/mobile|packages/shared)/'; then build "kode mobile berubah"; fi
+          echo "mobile=false" >> "$GITHUB_OUTPUT"; echo "Mobile tidak berubah: APK terakhir dipakai ulang."
+
+  apk:
+    needs: [test, changes]
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - id: check
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::warning title=APK tidak dibangun::Isi secret EXPO_TOKEN (Settings > Secrets and variables > Actions) agar APK dibangun otomatis."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check.outputs.ok == 'true'
+        uses: actions/checkout@v4
+      - if: steps.check.outputs.ok == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.check.outputs.ok == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: steps.check.outputs.ok == 'true'
+        run: pnpm install --frozen-lockfile
+      # versionCode harus naik tiap APK agar bisa menimpa yang terpasang; dicommit hanya di salinan runner (tidak di-push)
+      # supaya pohon git bersih, yang disyaratkan EAS pada mode non-interaktif.
+      - name: Naikkan versionCode
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          code=$((100 + GITHUB_RUN_NUMBER))
+          jq --argjson c "$code" '.expo.android.versionCode = $c' apps/mobile/app.json > /tmp/app.json && mv /tmp/app.json apps/mobile/app.json
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qam "ci: versionCode $code"
+          echo "versionCode = $code"
+      - name: Bangun APK di EAS
+        if: steps.check.outputs.ok == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx --yes eas-cli@16 build --platform android --profile apk --non-interactive --wait --json > build.json
+          url=$(jq -r '.[0].artifacts.buildUrl // empty' build.json)
+          [ -n "$url" ] || { echo "::error::EAS tidak mengembalikan alamat APK"; cat build.json; exit 1; }
+          curl -fL -o sajadah.apk "$url"
+          ls -l sajadah.apk
+          [ "$(stat -c%s sajadah.apk)" -gt 1000000 ] || { echo "::error::Berkas APK terlalu kecil"; exit 1; }
+      - name: Simpan APK sebagai rilis apk-latest
+        if: steps.check.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view apk-latest >/dev/null 2>&1 || gh release create apk-latest --title "APK terbaru" --notes "APK Android terbaru (dibangun otomatis; disisipkan ke image server)." --latest=false
+          gh release upload apk-latest apps/mobile/sajadah.apk --clobber
+
   image:
-    needs: test
+    needs: [test, apk]
+    # Tetap membangun image walau build APK gagal/dilewati; hanya berhenti bila tes gagal.
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Ambil APK terbaru untuk disisipkan ke image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download apk-latest --pattern sajadah.apk --dir apk --clobber || echo "Belum ada APK; image dibangun tanpa APK."
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:

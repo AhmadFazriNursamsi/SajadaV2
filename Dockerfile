@@ -23,7 +23,7 @@ RUN pnpm --filter @sajadah/api deploy --prod --legacy /prod/api
 
 # ---------- runtime ----------
 FROM node:24-bookworm-slim AS runtime
-ENV NODE_ENV=production PORT=3000 SEED=false TRUST_PROXY=true \
+ENV NODE_ENV=production PORT=3000 SEED=false TRUST_PROXY=true APK_PATH=/opt/apk/sajadah.apk \
     PRODUCT_IMAGE_DIR=/data/products AVATAR_DIR=/data/avatars VOUCHER_IMAGE_DIR=/data/vouchers
 WORKDIR /app/apps/api
 COPY --from=build /prod/api/node_modules ./node_modules
@@ -33,6 +33,8 @@ COPY --from=build /app/apps/api/drizzle ./drizzle
 COPY --from=build /app/apps/api/data ./data
 COPY --from=build /app/apps/web/dist /app/apps/web/dist
 COPY --from=build /app/apps/mobile/dist-web /app/apps/mobile/dist-web
+# APK terbaru dari CI (kosong bila belum pernah dibangun); disajikan di menu Aplikasi HP dan /api/app/sajadah.apk.
+COPY apk/ /opt/apk/
 RUN mkdir -p /data && chown -R node:node /data
 USER node
 VOLUME ["/data"]

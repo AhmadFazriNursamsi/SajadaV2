@@ -7,3 +7,5 @@ dist-web
 *.tsbuildinfo
 google-services.json
 *-service-account*.json
+# APK hasil CI disisipkan ke image, tidak di-commit
+apk/*.apk
