@@ -1,10 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { C } from './theme';
-import type { ShopProduct } from './shopData';
 import { BackBar } from './shop';
 import { ago, catsFor, dayGroup, destination, iconOf, useNotifs, type Notif, type NotifTab } from './notifData';
 
@@ -22,13 +21,17 @@ function Tabs({ tab, onTab, info, trx }: { tab: NotifTab; onTab: (t: NotifTab) =
   );
 }
 
+/** Filter kategori: turun ke baris berikutnya bila tidak muat, supaya semua pilihan terlihat (tidak terpotong di tepi layar). */
 function Chips({ cats, value, onPick }: { cats: string[]; value: string; onPick: (c: string) => void }) {
-  const renderItem = useCallback(({ item: c }: { item: string }) => (
-    <Pressable onPress={() => onPick(c)} accessibilityRole="button" accessibilityState={{ selected: value === c }} style={[s.chip, value === c && { backgroundColor: C.green, borderColor: C.green }]}>
-      <Text style={{ fontSize: 13, fontWeight: '600', color: value === c ? '#ffffff' : C.ink }}>{c}</Text>
-    </Pressable>
-  ), [value, onPick]);
-  return <FlatList horizontal data={cats} keyExtractor={(c) => c} renderItem={renderItem} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 12 }} style={s.chips} />;
+  return (
+    <View style={s.chips}>
+      {cats.map((c) => (
+        <Pressable key={c} onPress={() => onPick(c)} accessibilityRole="button" accessibilityState={{ selected: value === c }} style={[s.chip, value === c && { backgroundColor: C.green, borderColor: C.green }]}>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: value === c ? '#ffffff' : C.ink }}>{c}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 function Row({ n, onPress }: { n: Notif; onPress: (n: Notif) => void }) {
@@ -50,10 +53,10 @@ function Row({ n, onPress }: { n: Notif; onPress: (n: Notif) => void }) {
 }
 
 /** Kotak masuk notifikasi: tab Informasi/Transaksi, filter kategori, dikelompokkan per hari, status baca tersimpan di server. */
-export function NotificationList({ products }: { products: ShopProduct[] }) {
+export function NotificationList() {
   const router = useRouter();
   const bottom = useSafeAreaInsets().bottom;
-  const nf = useNotifs(products);
+  const nf = useNotifs();
   const [tab, setTab] = useState<NotifTab>('info');
   const [cat, setCat] = useState('Semua');
   const { refetch, markRead } = nf;
@@ -63,7 +66,7 @@ export function NotificationList({ products }: { products: ShopProduct[] }) {
     const list = nf.items.filter((n) => n.tab === tab && (cat === 'Semua' || n.cat === cat));
     const g = new Map<string, Notif[]>();
     for (const n of list) g.set(dayGroup(n.at), [...(g.get(dayGroup(n.at)) ?? []), n]);
-    return ['Hari ini', 'Kemarin', 'Sebelumnya', 'Promo berjalan'].filter((k) => g.has(k)).map((title) => ({ title, data: g.get(title)! }));
+    return ['Hari ini', 'Kemarin', 'Sebelumnya'].filter((k) => g.has(k)).map((title) => ({ title, data: g.get(title)! }));
   }, [nf.items, tab, cat]);
   const open = useCallback((n: Notif) => {
     if (n.id && !n.read) void markRead([n.id]);
@@ -101,7 +104,7 @@ const s = StyleSheet.create({
   tabs: { flexDirection: 'row', backgroundColor: C.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
   tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 13, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   badge: { backgroundColor: C.gold, minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  chips: { flexGrow: 0, backgroundColor: C.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: C.panel, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
   chip: { backgroundColor: C.panel, borderRadius: 18, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, paddingVertical: 7 },
   section: { fontSize: 12, fontWeight: '700', color: C.muted, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.panel, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },

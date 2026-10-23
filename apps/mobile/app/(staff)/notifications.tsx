@@ -1,5 +1,8 @@
 import { NotificationList } from '../../src/NotificationList';
+import { guardGroup } from '../../src/roleRoute';
 
-export default function StaffNotifications() {
-  return <NotificationList products={[]} />;
+function StaffNotifications() {
+  return <NotificationList />;
 }
+
+export default guardGroup('staff', 'notifications', StaffNotifications);

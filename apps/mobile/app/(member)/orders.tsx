@@ -15,6 +15,7 @@ import { Header, Pill } from '../../src/ListHeader';
 import { maxOrderable, useShop, type ShopProduct } from '../../src/shopData';
 import { C } from '../../src/theme';
 import { Button, Chips } from '../../src/ui';
+import { guardGroup } from '../../src/roleRoute';
 
 type Kind = 'all' | 'buy' | 'sell';
 type Msg = { ok: boolean; text: string } | null;
@@ -60,7 +61,9 @@ function PayBlock({ o, balance, confirm, setConfirm, pay }: { o: OrderGroup; bal
 
 function ReportNote({ r }: { r: OrderGroup['report'] }) {
   if (!r) return null;
-  if (r.status === 'ok') return <Text style={{ color: C.muted, fontSize: 12 }}>✓ Anda sudah memeriksa: barang sesuai pesanan.</Text>;
+  if (r.verifyStatus === 'pending') return <View style={{ padding: 10, backgroundColor: C.warn[0], borderRadius: 8 }}><Text style={{ color: C.warn[1], fontWeight: '600' }}>Foto terkirim, menunggu verifikasi petugas toko</Text><Text style={{ color: C.warn[1], fontSize: 12 }}>Pesanan selesai setelah petugas menyatakan foto valid.</Text></View>;
+  if (r.verifyStatus === 'invalid') return <View style={{ padding: 10, backgroundColor: C.bad[0], borderRadius: 8 }}><Text style={{ color: C.bad[1], fontWeight: '600' }}>Foto ditolak petugas toko</Text><Text style={{ color: C.bad[1], fontSize: 12 }}>{r.verifyNote ?? 'Foto belum sesuai.'} Kirim ulang foto barang yang diterima.</Text></View>;
+  if (r.status === 'ok') return <Text style={{ color: C.muted, fontSize: 12 }}>✓ Barang sesuai pesanan, sudah diverifikasi petugas toko.</Text>;
   const open = r.status === 'open';
   return (
     <View style={{ padding: 10, backgroundColor: open ? C.bad[0] : C.ok[0], borderRadius: 8 }}>
@@ -79,7 +82,7 @@ function Extras({ o, products, pay, balance, confirm, setConfirm }: { o: OrderGr
       <OrderDetail o={detail} hideContents />
       <PayBlock o={o} balance={balance} confirm={confirm} setConfirm={setConfirm} pay={pay} />
       <ReportNote r={o.report} />
-      {o.canCheck && <Button label="Cek barang yang dikirim" kind="ghost" onPress={() => router.push({ pathname: '/(member)/check', params: { id: o.id } })} />}
+      {o.canCheck && <Button label={o.report?.verifyStatus === 'invalid' ? 'Kirim ulang foto barang' : 'Cek barang yang dikirim'} kind="ghost" onPress={() => router.push({ pathname: '/(member)/check', params: { id: o.id } })} />}
       {o.status === 'awaiting_approval' && <Text style={{ color: C.muted, fontSize: 12 }}>Menunggu persetujuan toko. Setelah disetujui, saldo belanja otomatis terpotong dan pesanan siap dikirim.</Text>}
     </>
   );
@@ -97,7 +100,7 @@ function usePay(setMsg: (m: Msg) => void) {
 }
 
 /** Daftar Transaksi bergaya Klik Indomaret: filter status/tanggal, chip jenis, dan kartu per pesanan dengan Beli Lagi. */
-export default function Orders() {
+function Orders() {
   const router = useRouter();
   const cart = useCart();
   const q = useData<{ orders: any[] }>('/me/orders');
@@ -171,3 +174,5 @@ export default function Orders() {
 const s = StyleSheet.create({
   filters: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: C.line },
 });
+
+export default guardGroup('member', 'orders', Orders);

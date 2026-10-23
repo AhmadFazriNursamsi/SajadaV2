@@ -45,7 +45,7 @@ export default function WithdrawalsPage() {
   const rows = q.data ?? [];
   return (
     <>
-      <PageHead title="Penarikan saldo" desc="Pengajuan tarik saldo penarikan anggota (20% dari belanja yang sudah diterima). Transfer dulu ke rekening anggota di luar aplikasi, lalu tandai sudah dibayar." />
+      <PageHead title="Penarikan saldo" desc="Pengajuan tarik saldo penarikan anggota (imbalan dari belanja yang sudah diterima). Transfer dulu ke rekening anggota di luar aplikasi, lalu tandai sudah dibayar." />
       <div className="page">
         <Gate q={q}>
           <Block title="Pengajuan penarikan" note="Saldo anggota ditahan saat mengajukan. Bila ditolak, saldo otomatis kembali.">

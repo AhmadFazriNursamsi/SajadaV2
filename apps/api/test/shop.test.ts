@@ -21,23 +21,25 @@ afterAll(() => app.close());
 
 
 describe('Toko anggota', () => {
-  it('katalog memuat kategori, harga coret, diskon, dan stok per toko', async () => {
+  it('katalog memuat kategori, harga tetap (tanpa coret/diskon), persen imbalan, dan stok per toko', async () => {
     const shop = (await member.get('/me/shop')).body;
     expect(shop.depots.length).toBeGreaterThan(0);
     expect(shop.categories).toContain('Makanan');
     const a = shop.products.find((p: any) => p.sku === 'PRD-01');
-    expect(a).toMatchObject({ price: 100_000, listPrice: 125_000, discountPct: 20, category: 'Makanan', imageUrl: null });
+    expect(a).toMatchObject({ price: 100_000, rewardPercent: 20, category: 'Makanan', imageUrl: null });
+    expect(a).not.toHaveProperty('listPrice');
+    expect(a).not.toHaveProperty('discountPct');
     expect(Object.keys(a.stock).sort()).toEqual(shop.depots.map((d: any) => d.id).sort());
     expect(a.available).toBe(Object.values(a.stock).reduce((x: number, y: any) => x + y, 0));
-    expect(shop.products.find((p: any) => p.sku === 'PRD-02').discountPct).toBe(0);
   });
 
-  it('pengurus mengubah deskripsi dan harga normal; harga normal harus di atas harga jual', async () => {
+  it('pengurus mengubah deskripsi; harga normal tidak lagi dikenal', async () => {
     const id = (await member.get('/me/shop')).body.products.find((p: any) => p.sku === 'PRD-02').id;
-    expect((await admin.call('PATCH', `/central/products/${id}`, { listPrice: 80_000 })).status).toBe(422);
-    expect((await admin.call('PATCH', `/central/products/${id}`, { listPrice: 120_000, description: 'Deskripsi baru' })).status).toBe(200);
+    expect((await admin.call('PATCH', `/central/products/${id}`, { listPrice: 80_000 })).status).toBe(422); // tidak ada yang diubah: listPrice diabaikan
+    expect((await admin.call('PATCH', `/central/products/${id}`, { description: 'Deskripsi baru' })).status).toBe(200);
     const p = (await member.get('/me/shop')).body.products.find((x: any) => x.id === id);
-    expect(p).toMatchObject({ listPrice: 120_000, discountPct: 25, description: 'Deskripsi baru' });
+    expect(p).toMatchObject({ description: 'Deskripsi baru' });
+    expect(p).not.toHaveProperty('discountPct');
   });
 
   it('unggah foto: hanya pengurus, isi harus gambar, lalu bisa dimuat publik', async () => {

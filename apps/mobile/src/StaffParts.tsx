@@ -5,13 +5,32 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { C } from './theme';
 import { useNotifs } from './notifData';
+import { useData } from './hooks';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
+
+interface OpnameTasks { opname?: { state: 'ok' | 'due' | 'locked'; month: string; dueDate: string | null; daysLeft: number | null } | null; opnameLocked?: { name: string; month: string }[] }
+
+/** Kewajiban stok opname bulanan: peringatan mendekati akhir bulan, dan pemberitahuan bila toko dikunci (pengurus: daftar toko yang dikunci). */
+export function OpnameNotice({ onPress }: { onPress?: () => void }) {
+  const q = useData<OpnameTasks>('/overview/depot-tasks');
+  const o = q.data?.opname, locked = q.data?.opnameLocked ?? [];
+  let tone: 'bad' | 'warn' | null = null, title = '', text = '';
+  if (o?.state === 'locked') { tone = 'bad'; title = 'Transaksi toko dikunci'; text = `Stok opname bulan ${o.month} belum diajukan. Pesanan, pembayaran, pengiriman, dan stok masuk baru bisa dilanjutkan setelah opname diajukan.`; }
+  else if (o?.state === 'due') { tone = 'warn'; title = `Stok opname bulan ${o.month} jatuh tempo ${o.dueDate}`; text = `${o.daysLeft} hari lagi. Bila terlewat, transaksi toko dikunci.`; }
+  else if (locked.length) { tone = 'bad'; title = 'Toko dikunci: stok opname terlewat'; text = `${locked.map((d) => `${d.name} (${d.month})`).join(', ')}. Petugas tokonya perlu mengajukan opname.`; }
+  if (!tone) return null;
+  const c = C[tone];
+  const body = (<><Text style={{ color: c[1], fontWeight: '700' }}>{title}</Text><Text style={{ color: c[1], fontSize: 12, marginTop: 2 }}>{text}{onPress && o ? ' Ketuk untuk membuka Stok opname.' : ''}</Text></>);
+  return onPress && o
+    ? <Pressable onPress={onPress} accessibilityRole="button" style={{ backgroundColor: c[0], padding: 12, marginHorizontal: 16, marginTop: 12, borderRadius: 10 }}>{body}</Pressable>
+    : <View style={{ backgroundColor: c[0], padding: 12, marginHorizontal: 16, marginTop: 12, borderRadius: 10 }}>{body}</View>;
+}
 
 /** Lonceng notifikasi di kepala halaman petugas, dengan jumlah yang belum dibaca. */
 export function StaffBell() {
   const router = useRouter();
-  const n = useNotifs([]).unread();
+  const n = useNotifs().unread();
   return (
     <Pressable onPress={() => router.push('/(staff)/notifications' as never)} hitSlop={10} accessibilityRole="button" accessibilityLabel={`Notifikasi, ${n} belum dibaca`} style={s.bell}>
       <Ionicons name="notifications-outline" size={24} color="#ffffff" />

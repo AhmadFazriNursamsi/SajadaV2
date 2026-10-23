@@ -1,5 +1,10 @@
-/** Tagihan harian: tiap hari aktif (ada belanja sendiri yang diterima) memotong Rp30.000 dari saldo penarikan, sampai 730 hari aktif (2 tahun). */
+/**
+ * Tagihan harian: pada hari aktif memotong Rp30.000 dari saldo penarikan, sampai 730 hari aktif (2 tahun).
+ * Hari aktif = hari (WIB) ketika total imbalan yang masuk dari belanja sendiri yang diterima sudah mencapai INSTALLMENT_MIN_REWARD.
+ */
 export const INSTALLMENT_AMOUNT = 30_000;
+/** Batas total imbalan harian (Rp) agar tagihan hari itu dipotong; di bawahnya tidak ada potongan dan hari tidak dihitung. */
+export const INSTALLMENT_MIN_REWARD = 30_000;
 export const INSTALLMENT_DAYS = 730;
 
 export interface InstallmentPlan {

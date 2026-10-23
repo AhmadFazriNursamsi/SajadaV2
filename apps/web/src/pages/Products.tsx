@@ -8,15 +8,11 @@ import type { CentralRow } from '../types';
 
 const num = (v: string) => Math.floor(Number(v.replace(/\D/g, '')) || 0);
 
-function problemOf(f: { name: string }, sell: number, safety: number, target: number, list: number) {
+function problemOf(f: { name: string }, sell: number, safety: number, target: number, reward: number) {
   if (f.name.trim().length < 2) return 'Isi nama produk (minimal 2 huruf).';
-  if (sell <= 0) return 'Isi harga jual.';
-  if (list && list <= sell) return 'Harga normal harus di atas harga jual (atau kosongkan).';
+  if (sell <= 0) return 'Isi harga.';
+  if (reward > 100) return 'Imbalan maksimal 100%.';
   return target < safety ? 'Target stok tidak boleh di bawah stok aman.' : '';
-}
-
-function ProblemNote({ problem }: { problem: string }) {
-  return <p className="note">{problem}</p>;
 }
 
 /** Foto produk: dipilih dari berkas, dikecilkan di browser, lalu langsung diunggah. */
@@ -85,12 +81,11 @@ function CategoryField({ value, onChange, known }: { value: string; onChange: (v
 
 function ProductDialog({ p, known, onClose }: { p: CentralRow | null; known: string[]; onClose: () => void }) {
   const act = useAct();
-  const f = useForm({ name: p?.name ?? '', sku: '', sell: p ? String(p.sellPrice) : '', safety: p ? String(p.safety) : '5', target: p ? String(p.target) : '20', category: p?.category ?? '', description: p?.description ?? '', list: p?.listPrice ? String(p.listPrice) : '', coins: p ? String(p.coins) : '0' });
+  const f = useForm({ name: p?.name ?? '', sku: '', sell: p ? String(p.sellPrice) : '', safety: p ? String(p.safety) : '5', target: p ? String(p.target) : '20', category: p?.category ?? '', description: p?.description ?? '', coins: p ? String(p.coins) : '0', reward: p ? String(p.rewardPercent) : '20' });
   const sell = num(f.v.sell), safety = num(f.v.safety), target = num(f.v.target);
-  const list = num(f.v.list);
-  const problem = problemOf(f.v, sell, safety, target, list);
+  const problem = problemOf(f.v, sell, safety, target, num(f.v.reward));
   const name = f.v.name.trim();
-  const body = { name, sellPrice: sell, safety, target, category: f.v.category.trim(), description: f.v.description.trim(), listPrice: list, coins: num(f.v.coins) };
+  const body = { name, sellPrice: sell, safety, target, category: f.v.category.trim(), description: f.v.description.trim(), coins: num(f.v.coins), rewardPercent: num(f.v.reward) };
   const toast = useToast();
   const qc = useQueryClient();
   const [photo, setPhoto] = useState<File | null>(null);
@@ -111,24 +106,47 @@ function ProductDialog({ p, known, onClose }: { p: CentralRow | null; known: str
     finally { setCreating(false); }
   };
   const save = () => (p ? act.run('PATCH', `/central/products/${p.id}`, `${name} diperbarui`, body, onClose) : void create());
+  const exampleReward = Math.floor((sell * Math.min(num(f.v.reward), 100)) / 100);
   return (
-    <Modal title={p ? `Ubah produk — ${p.name}` : 'Produk baru'} open onClose={onClose} footer={<>
+    <Modal lg title={p ? `Ubah produk — ${p.name}` : 'Produk baru'} open onClose={onClose} footer={<>
+      <span className="pf-problem" role={problem ? 'status' : undefined}>{problem}</span>
       <Btn kind="g" onClick={onClose}>Batal</Btn>
       <Btn disabled={act.busy || creating || !!problem} onClick={save}>{p ? 'Simpan perubahan' : 'Buat produk'}</Btn>
     </>}>
-      <Fields>
-        <Field {...f.bind('name', 'Nama produk', 'mis. Produk baru')} focus />
-        {p ? <Field label="SKU" value={p.sku} onChange={() => undefined} hint="Tidak bisa diubah" /> : <Field {...f.bind('sku', 'SKU (opsional)', 'otomatis, mis. PRD-04')} />}
-        <Field {...f.bind('sell', 'Harga jual (Rp)', 'mis. 10.000')} type="rupiah" />
-        <Field {...f.bind('safety', 'Stok aman')} type="number" hint="Di bawah ini produk dianggap menipis" />
-        <Field {...f.bind('target', 'Target stok')} type="number" hint="Dipakai menghitung kebutuhan beli" />
-        <CategoryField value={f.v.category} onChange={(v) => f.set('category', v)} known={known} />
-        <Field {...f.bind('list', 'Harga normal (Rp, opsional)', 'mis. 12.000')} type="rupiah" hint="Dicoret di toko bila diisi dan di atas harga jual" />
-        <Field {...f.bind('coins', 'Koin per produk')} type="number" hint="Koin yang didapat anggota tiap produk, saat belanja sendiri sudah diterima" />
-        <Field {...f.bind('description', 'Deskripsi produk')} type="textarea" />
-      </Fields>
-      {p ? <PhotoField p={p} /> : <NewPhotoField file={photo} onPick={setPhoto} />}
-      <ProblemNote problem={problem} />
+      <div className="pform">
+        <div className="pf-main">
+          <section className="pf-sec">
+            <h4>Informasi produk</h4>
+            <div className="pf-grid">
+              <div className="pf-span2"><Field {...f.bind('name', 'Nama produk', 'mis. Bakso Ayam 500 g')} focus /></div>
+              {p ? <Field label="SKU" value={p.sku} onChange={() => undefined} hint="Tidak bisa diubah" /> : <Field {...f.bind('sku', 'SKU (opsional)', 'otomatis, mis. PRD-07')} />}
+              <CategoryField value={f.v.category} onChange={(v) => f.set('category', v)} known={known} />
+              <div className="pf-span2"><Field {...f.bind('description', 'Deskripsi (tampil di toko anggota)')} type="textarea" /></div>
+            </div>
+          </section>
+          <section className="pf-sec">
+            <h4>Harga &amp; stok</h4>
+            <div className="pf-grid c3">
+              <Field {...f.bind('sell', 'Harga (Rp)', 'mis. 100.000')} type="rupiah" />
+              <Field {...f.bind('safety', 'Stok aman')} type="number" hint="Di bawah ini dianggap menipis" />
+              <Field {...f.bind('target', 'Target stok')} type="number" hint="Dasar hitung kebutuhan beli" />
+            </div>
+          </section>
+          <section className="pf-sec">
+            <h4>Imbalan anggota</h4>
+            <div className="pf-grid">
+              <Field {...f.bind('reward', 'Imbalan saldo penarikan (%)')} type="number" hint="0 = tanpa imbalan, maksimal 100" />
+              <Field {...f.bind('coins', 'Koin per produk')} type="number" hint="Koin tiap satuan produk" />
+            </div>
+            <p className="pf-example">
+              {sell > 0 && num(f.v.reward) > 0
+                ? <>Contoh: anggota membeli seharga <b>{R(sell)}</b> → saldo belanja terpotong {R(sell)}, lalu <b>{R(exampleReward)}</b> masuk ke saldo penarikan setelah barang diterima.</>
+                : 'Imbalan masuk ke saldo penarikan anggota saat belanja sendiri sudah diterima. Saldo belanja tetap terpotong sebesar harga penuh.'}
+            </p>
+          </section>
+        </div>
+        <div className="pf-side">{p ? <PhotoField p={p} /> : <NewPhotoField file={photo} onPick={setPhoto} />}</div>
+      </div>
     </Modal>
   );
 }
@@ -138,8 +156,9 @@ function ProductTable({ rows, onEdit }: { rows: CentralRow[]; onEdit: (p: Centra
   return (
     <Table rows={rows} cols={[
       { head: 'Produk', cell: (x) => <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>{imageSrc(x.image) ? <img className="thumb" src={imageSrc(x.image)!} alt="" /> : <div className="thumb" />}<div><b>{x.name}</b><div style={{ fontSize: 12, color: 'var(--muted)' }}>{x.sku}{x.category ? ` · ${x.category}` : ''}</div></div></div> },
-      { head: 'Harga jual', mono: true, right: true, cell: (x) => R(x.sellPrice) },
+      { head: 'Harga', mono: true, right: true, cell: (x) => R(x.sellPrice) },
       { head: 'Koin', mono: true, right: true, cell: (x) => x.coins },
+      { head: 'Imbalan', mono: true, right: true, cell: (x) => `${x.rewardPercent}%` },
       { head: 'Stok aman / target', mono: true, right: true, cell: (x) => `${x.safety} / ${x.target}` },
       { head: 'Status', cell: (x) => <Badge tone={x.active ? 'ok' : 'bad'}>{x.active ? 'Aktif' : 'Nonaktif'}</Badge> },
     ]} actions={(x) => (<>

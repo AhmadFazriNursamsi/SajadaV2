@@ -1,7 +1,7 @@
 import { useData } from './hooks';
 
 export interface ShopProduct {
-  id: string; sku: string; name: string; price: number; listPrice: number; discountPct: number; coins: number;
+  id: string; sku: string; name: string; price: number; coins: number; rewardPercent: number;
   category: string | null; description: string | null; imageUrl: string | null; stock: Record<string, number>; available: number;
 }
 export interface ShopDepot { id: string; name: string; address: string | null; lat: number | null; lng: number | null }

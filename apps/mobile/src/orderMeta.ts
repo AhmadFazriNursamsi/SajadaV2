@@ -6,7 +6,7 @@ export interface OrderGroup {
   role: 'seller' | 'buyer'; selfOrder: boolean; buyerName: string | null; customerOrder: boolean; canPay: boolean; canCheck: boolean;
   approvedAt: string | null; approvedBy: string | null; pay: 'unpaid' | 'balance' | 'cash'; shipped: boolean; deliveryRef: string | null;
   received: boolean; receivedAt: string | null; receiverName: string | null; proofRef: string | null; cancelReason: string | null;
-  report: { status: 'ok' | 'open' | 'resolved'; resolution: string | null; resolvedByName: string | null } | null;
+  report: { status: 'ok' | 'open' | 'resolved'; resolution: string | null; resolvedByName: string | null; verifyStatus: 'pending' | 'valid' | 'invalid'; verifyNote: string | null } | null;
 }
 
 export const STATUS: Record<string, [string, Tone]> = {

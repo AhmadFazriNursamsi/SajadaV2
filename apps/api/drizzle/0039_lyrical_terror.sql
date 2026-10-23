@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "reward_percent" integer DEFAULT 20 NOT NULL;

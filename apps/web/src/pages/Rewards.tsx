@@ -2,7 +2,6 @@ import { Block, Gate, Kpi, Kpis, PageHead, Table } from '../ui';
 import { R, useData } from '../hooks';
 
 interface Summary {
-  percent: number;
   kpis: { rewardBalance: number; rewardEarned: number; withdrawnPaid: number; coinBalance: number; coinsEarned: number; coinsRedeemed: number; withdrawalsPending: number; redemptionsPending: number };
   orders: { id: string; no: string; at: string; memberName: string; memberNo: string | null; total: number; reward: number; coins: number }[];
   members: { id: string; name: string; memberNo: string | null; balance: number; rewardBalance: number; coinBalance: number }[];
@@ -17,7 +16,7 @@ export default function RewardsPage() {
   const d = q.data;
   return (
     <>
-      <PageHead title="Imbalan anggota" desc={`Tiap belanja sendiri yang sudah diterima memberi anggota ${d?.percent ?? 20}% dari nilainya ke saldo penarikan, ditambah koin sesuai koin per produk. Saldo penarikan ditarik lewat menu Penarikan saldo; koin ditukar lewat menu Voucher koin.`} />
+      <PageHead title="Imbalan anggota" desc={`Tiap belanja sendiri yang sudah diterima memberi anggota imbalan ke saldo penarikan sesuai persen tiap produk (diatur di menu Produk), ditambah koin sesuai koin per produk. Saldo penarikan ditarik lewat menu Penarikan saldo; koin ditukar lewat menu Voucher koin.`} />
       <div className="page">
         <Gate q={q}>
           {d && (<>
@@ -32,7 +31,7 @@ export default function RewardsPage() {
                 { head: 'Pesanan', cell: (o) => <><b>{o.no}</b><div style={sub}>{stamp(o.at)}</div></> },
                 { head: 'Anggota', cell: (o) => <>{o.memberName}<div style={sub}>{o.memberNo ?? '—'}</div></> },
                 { head: 'Nilai', mono: true, right: true, cell: (o) => R(o.total) },
-                { head: `Saldo penarikan (${d.percent}%)`, mono: true, right: true, cell: (o) => R(o.reward) },
+                { head: 'Saldo penarikan', mono: true, right: true, cell: (o) => R(o.reward) },
                 { head: 'Koin', mono: true, right: true, cell: (o) => o.coins.toLocaleString('id-ID') },
               ]} />
             </Block>

@@ -66,7 +66,7 @@ function BottomBar({ p }: { p: ShopProduct }) {
   );
 }
 
-/** Detail produk bergaya Klik Indomaret: foto besar, nama, harga + coret/diskon, cari toko, deskripsi, dan tombol keranjang. */
+/** Detail produk bergaya Klik Indomaret: foto besar, nama, harga + imbalan, cari toko, deskripsi, dan tombol keranjang. */
 export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const shop = useShop();
@@ -83,7 +83,7 @@ export default function ProductDetail() {
         <View style={s.section}>
           <Text style={{ fontSize: 18, color: C.ink, fontWeight: '500', lineHeight: 25 }}>{p.name}</Text>
           <View style={{ marginTop: 10 }}><PriceBlock p={p} big /></View>
-          <Text style={{ color: C.muted, fontSize: 12, marginTop: 6 }}>Harga{p.category ? ` · ${p.category}` : ''} · {p.available > 0 ? `${sellers.length} toko menjual` : 'Stok habis di semua toko'}</Text>
+          <Text style={{ color: C.muted, fontSize: 12, marginTop: 6 }}>{[p.category, p.available > 0 ? `${sellers.length} toko menjual` : 'Stok habis di semua toko'].filter(Boolean).join(' · ')}</Text>
           <Pressable onPress={() => setSheet(true)} accessibilityRole="button" style={s.find}>
             <Ionicons name="location" size={20} color={C.green} />
             <Text style={{ color: C.green, fontWeight: '700', fontSize: 16 }}>Cari Toko yang Menjual</Text>

@@ -1,8 +1,8 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import type { Database } from '../db/db';
-import { COMMISSION_RATES } from '@sajadah/shared';
-import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockMovements, users } from '../db/schema';
+import { COMMISSION_RATES, OPNAME_WINDOW_DAYS } from '@sajadah/shared';
+import { auditLog, commissionPlans, counters, depotStock, depots, notifications, orders, purchaseOrders, stockCounts, stockMovements, users } from '../db/schema';
 import { BusinessError } from '../common/errors';
 import type { Actor } from '../auth/auth.types';
 
@@ -67,6 +67,43 @@ export class CoreService {
   }
 
   /** Petugas toko tidak boleh menyentuh data toko lain. */
+  /**
+   * Kewajiban stok opname bulanan satu toko (zona WIB). Opname bulan P dianggap dipenuhi bila ada opname berstatus diajukan/disetujui
+   * yang diajukan paling cepat OPNAME_WINDOW_DAYS hari sebelum P berakhir (juga bila diajukan terlambat setelahnya).
+   *  - 'locked': bulan lalu terlewat tanpa opname → transaksi toko dikunci sampai opname diajukan.
+   *  - 'due'    : bulan ini sudah masuk jendela opname dan belum diajukan (peringatan, belum dikunci).
+   * Toko yang baru dibuka setelah jendela bulan lalu dimulai tidak diwajibkan untuk bulan itu.
+   */
+  async opnameStatus(q: Q, depotId: string, now = new Date()): Promise<{ state: 'ok' | 'due' | 'locked'; month: string; dueDate: string | null; daysLeft: number | null }> {
+    const wib = 7 * 3_600_000, day = 86_400_000;
+    const w = new Date(now.getTime() + wib);
+    const y = w.getUTCFullYear(), m = w.getUTCMonth();
+    const startOf = (yy: number, mm: number) => Date.UTC(yy, mm, 1) - wib; // awal bulan WIB (ms epoch); mm boleh di luar 0–11
+    const startCur = startOf(y, m), endCur = startOf(y, m + 1);
+    const lastDay = (endMs: number) => new Date(endMs - 1 + wib).toISOString().slice(0, 10);
+    const label = (mm: number) => ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'][((mm % 12) + 12) % 12]!;
+    const [[d], [last]] = await Promise.all([
+      q.select({ createdAt: depots.createdAt }).from(depots).where(eq(depots.id, depotId)),
+      q.select({ at: sql<Date | null>`max(${stockCounts.submittedAt})` }).from(stockCounts).where(and(eq(stockCounts.depotId, depotId), inArray(stockCounts.status, ['submitted', 'approved']))),
+    ]);
+    const lastMs = last?.at ? new Date(last.at).getTime() : 0;
+    const prevWindowStart = startCur - OPNAME_WINDOW_DAYS * day;
+    if (d && d.createdAt.getTime() < prevWindowStart && lastMs < prevWindowStart) return { state: 'locked', month: label(m - 1), dueDate: lastDay(startCur), daysLeft: null };
+    const windowStart = endCur - OPNAME_WINDOW_DAYS * day;
+    if (now.getTime() >= windowStart && lastMs < windowStart) return { state: 'due', month: label(m), dueDate: lastDay(endCur), daysLeft: Math.max(0, Math.ceil((endCur - now.getTime()) / day)) };
+    return { state: 'ok', month: label(m), dueDate: null, daysLeft: null };
+  }
+
+  /** Transaksi toko (stok, pesanan) ditolak bila opname bulanan terlewat. Opname sendiri selalu boleh. */
+  async assertDepotOpen(q: Q, depotId: string, forMember = false): Promise<void> {
+    if (process.env.OPNAME_LOCK === 'off') return; // saklar darurat operator; tes non-opname mematikannya agar tidak bergantung pada tanggal
+    const s = await this.opnameStatus(q, depotId);
+    if (s.state !== 'locked') return;
+    throw new BusinessError(forMember
+      ? 'Toko ini sementara belum dapat melayani pesanan. Silakan pilih toko lain atau coba lagi nanti.'
+      : `Transaksi toko dikunci: stok opname bulan ${s.month} belum diajukan. Lakukan stok opname dulu, setelah diajukan transaksi bisa dilanjutkan.`);
+  }
+
   assertDepot(a: Actor, depotId: string): void {
     if (a.did && a.did !== depotId) throw new ForbiddenException('Data ini milik toko lain.');
   }
@@ -83,6 +120,7 @@ export class CoreService {
    * (jumlah +/-, saldo sesudahnya, referensi dokumen, pelaku). `transitDelta` (negatif) mengurangi angka "dalam perjalanan" saat kiriman dari pusat diterima.
    */
   async moveStock(q: Q, a: Actor, m: { depotId: string; productId: string; delta: number; type: typeof stockMovements.$inferInsert['type']; refNo?: string | null; note?: string | null; transitDelta?: number }): Promise<number> {
+    if (m.type !== 'opname' && m.type !== 'opening') await this.assertDepotOpen(q, m.depotId);
     const st = await this.lockStock(q, m.depotId, m.productId);
     const next = st.physical + m.delta;
     if (next < 0) throw new BusinessError('Stok fisik tidak boleh negatif.');

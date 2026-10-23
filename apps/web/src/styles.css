@@ -305,3 +305,29 @@ table.opname tr.pos td:first-child { box-shadow: inset 3px 0 0 var(--gold, #c899
 .thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--bg); border: 1px solid var(--line); display: block; }
 .thumb-lg { width: 120px; height: 120px; }
 .photo { display: flex; gap: 14px; align-items: center; }
+
+/* Formulir produk: dialog lebar dengan foto di kiri dan bagian-bagian terkelompok; header dan tombol tetap terlihat. */
+.modal.lg { width: min(780px, calc(100% - 32px)); display: flex; flex-direction: column; overflow: hidden; }
+.modal.lg .modal-b { overflow-y: auto; min-height: 0; }
+.modal.lg .modal-f { align-items: center; }
+.pform { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 22px; align-items: start; }
+.pf-side { grid-column: 1; grid-row: 1; }
+.pf-main { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.pf-sec h4 { margin: 0 0 10px; font: 600 12px var(--sans, inherit); letter-spacing: .06em; text-transform: uppercase; color: var(--brand); padding-bottom: 6px; border-bottom: 1px solid var(--line-2); }
+.pf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.pf-grid.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pf-grid .pf-span2 { grid-column: span 2; }
+.pf-grid .field, .pf-grid .combo { min-width: 0; }
+.pf-example { margin: 10px 0 0; padding: 9px 12px; border-radius: 6px; background: var(--ok-bg); color: var(--brand); font-size: 12.5px; line-height: 1.5; }
+.pf-problem { margin-right: auto; font-size: 12px; color: var(--muted); }
+.pform .photo { flex-direction: column; align-items: stretch; gap: 10px; }
+.pform .photo .thumb-lg { width: 100%; height: auto; aspect-ratio: 1; border-style: dashed; border-radius: 10px; }
+.pform .photo input[type=file] { padding: 5px; font-size: 12px; }
+.pform .photo input[type=file]::file-selector-button { border: 1px solid var(--line); background: var(--panel-2); color: var(--brand); border-radius: 4px; padding: 5px 9px; margin-right: 8px; cursor: pointer; font: inherit; }
+@media (max-width: 640px) { .pform { grid-template-columns: 1fr; } .pf-side, .pf-main { grid-column: 1; } .pf-side { grid-row: 1; } .pf-main { grid-row: 2; } .pform .photo { flex-direction: row; align-items: center; } .pform .photo .thumb-lg { width: 96px; } .pf-grid, .pf-grid.c3 { grid-template-columns: 1fr; } .pf-grid .pf-span2 { grid-column: auto; } }
+
+/* Pengingat kewajiban stok opname bulanan di atas halaman. */
+.optice { margin: 12px 24px 0; padding: 10px 14px; border-radius: 8px; font-size: 13.5px; line-height: 1.5; border: 1px solid transparent; }
+.optice a { font-weight: 600; margin-left: 6px; white-space: nowrap; }
+.optice.bad { background: var(--bad-bg); color: var(--bad-fg); border-color: color-mix(in srgb, var(--bad-fg) 30%, white); }
+.optice.warn { background: var(--warn-bg, #f1e4c8); color: var(--warn-fg, #644c16); border-color: color-mix(in srgb, var(--warn-fg, #644c16) 25%, white); }

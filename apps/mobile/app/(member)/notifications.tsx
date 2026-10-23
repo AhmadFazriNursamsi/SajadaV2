@@ -1,7 +1,8 @@
 import { NotificationList } from '../../src/NotificationList';
-import { useShop } from '../../src/shopData';
+import { guardGroup } from '../../src/roleRoute';
 
-export default function Notifications() {
-  const shop = useShop();
-  return <NotificationList products={shop.data?.products ?? []} />;
+function Notifications() {
+  return <NotificationList />;
 }
+
+export default guardGroup('member', 'notifications', Notifications);

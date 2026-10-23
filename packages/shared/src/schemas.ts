@@ -91,6 +91,11 @@ export const nearSchema = z.object({ lat, lng });
 export const depotStaffSchema = z.object({ name: z.string().trim().min(2, 'Nama petugas minimal 2 karakter').max(80) });
 export const shipSchema = z.object({ deliveryRef: ref });
 export const receiveOrderSchema = z.object({ proofRef: ref, receiverName: z.string().trim().min(1, 'Nama penerima wajib').max(120) });
+/** Stok opname wajib tiap akhir bulan: diajukan paling cepat sekian hari sebelum bulan berakhir. Bulan berlalu tanpa itu → transaksi toko dikunci. */
+export const OPNAME_WINDOW_DAYS = 7;
+/** Pesanan anggota yang belum diperiksa anggotanya baru boleh diselesaikan pengurus setelah sekian hari sejak dikirim. */
+export const MEMBER_CHECK_GRACE_DAYS = 3;
+export const receiveOverrideSchema = z.object({ reason: z.string().trim().min(10, 'Jelaskan alasannya (minimal 10 karakter)').max(300) });
 export const cancelSchema = z.object({ reason: z.string().trim().min(1, 'Isi alasan pembatalan').max(300) });
 /** Hitungan opname per baris; countedQty null = belum dihitung. */
 export const countLineSchema = z.object({
@@ -145,7 +150,7 @@ export const updateMemberSchema = z.object({
 }).refine((v) => v.name !== undefined || v.familyCode !== undefined, { message: 'Tidak ada yang diubah' });
 export const deactivateMemberSchema = z.object({ reason: z.string().trim().min(5, 'Isi alasan (minimal 5 karakter)').max(300) });
 
-/** Saldo penarikan: persen dari nilai belanja sendiri yang masuk setelah barang diterima. */
+/** Saldo penarikan: persen bawaan produk baru. Tiap produk punya persennya sendiri (products.rewardPercent), diatur admin. */
 export const REWARD_PERCENT = 20;
 /** Penarikan saldo ke rekening minimal Rp20.000 (pindah ke saldo belanja tanpa batas minimal). */
 export const MIN_WITHDRAWAL = 20_000;
@@ -159,23 +164,23 @@ export const withdrawalSchema = z.object({
 
 /** Admin pusat: master produk, stok gudang pusat, dan pengiriman ke toko. */
 const money0 = z.coerce.number().int('Harus bilangan bulat').min(0, 'Tidak boleh negatif').max(1_000_000_000);
-/** Tampilan toko anggota. Harga normal 0 berarti tanpa harga coret; bila diisi harus di atas harga jual. */
+/** Tampilan toko anggota. Harga tetap: tidak ada harga coret atau diskon. */
 const shopFields = {
   category: z.string().trim().max(40).optional(),
   description: z.string().trim().max(2000).optional(),
-  listPrice: money0.optional(),
   coins: z.coerce.number().int('Harus bilangan bulat').min(0).max(1_000_000).optional(),
+  /** Persen nilai produk yang masuk saldo penarikan saat belanja sendiri diterima (0 = tanpa imbalan). */
+  rewardPercent: z.coerce.number().int('Harus bilangan bulat').min(0, 'Minimal 0%').max(100, 'Maksimal 100%').optional(),
 };
 export const createProductSchema = z.object({
   name: z.string().trim().min(2, 'Nama produk minimal 2 karakter').max(80),
   sku: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9-]{1,19}$/, 'SKU huruf besar/angka/strip, 2–20 karakter').optional(),
   buyPrice: money0.optional().default(0), // tidak lagi diisi dari halaman Produk; dipakai hutang pemasok & nilai opname bila ada
-  sellPrice: money0.refine((v) => v > 0, 'Harga jual harus lebih dari 0'),
+  sellPrice: money0.refine((v) => v > 0, 'Harga harus lebih dari 0'),
   safety: z.coerce.number().int().min(0).max(100000),
   target: z.coerce.number().int().min(0).max(100000),
   ...shopFields,
-}).refine((p) => p.target >= p.safety, { message: 'Target stok tidak boleh di bawah stok aman', path: ['target'] })
-  .refine((p) => !p.listPrice || p.listPrice > p.sellPrice, { message: 'Harga normal harus di atas harga jual (atau kosongkan)', path: ['listPrice'] });
+}).refine((p) => p.target >= p.safety, { message: 'Target stok tidak boleh di bawah stok aman', path: ['target'] });
 export const updateProductSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
   buyPrice: money0.optional(),
@@ -234,7 +239,13 @@ export const updateProfileSchema = z.object({
  * Anggota memeriksa barang yang dikirim untuk pesanannya. `items` kosong = semua sesuai.
  * Jumlah diterima ≤ jumlah dipesan; bila kurang, alasan wajib (kurang/rusak/salah produk/lainnya); "lainnya" wajib dicatat.
  */
+/** Foto bukti penerimaan: JPEG (data URL base64) yang sudah dikecilkan di aplikasi, sekitar maksimal 1,3 MB. */
+export const RECEIPT_PHOTO_MAX_CHARS = 1_800_000;
+export const verifyReceiptSchema = z.object({ valid: z.boolean(), note: z.string().trim().max(300).optional() })
+  .refine((v) => v.valid || (v.note?.length ?? 0) >= 3, { message: 'Isi alasan foto ditolak (minimal 3 karakter)', path: ['note'] });
 export const orderCheckSchema = z.object({
+  /** Wajib: foto barang yang diterima. Petugas toko memeriksanya sebelum pesanan selesai. */
+  photo: z.string({ required_error: 'Foto barang yang diterima wajib dilampirkan' }).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/, 'Foto harus berupa gambar JPEG').max(RECEIPT_PHOTO_MAX_CHARS, 'Foto terlalu besar'),
   note: z.string().trim().max(300).optional(),
   items: z.array(z.object({
     productId: id,

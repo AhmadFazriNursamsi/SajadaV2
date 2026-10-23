@@ -133,6 +133,8 @@ export const products = pgTable('products', {
   image: text('image'),
   /** Koin yang didapat anggota per satuan produk saat belanja sendiri diterima. */
   coins: integer('coins').notNull().default(0),
+  /** Persen nilai produk yang masuk ke saldo penarikan anggota saat belanja sendiri diterima (0–100); bisa diatur per produk. */
+  rewardPercent: integer('reward_percent').notNull().default(20),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('products_tenant_sku_uq').on(t.tenantId, t.sku)]);
 
@@ -241,7 +243,19 @@ export const orderReports = pgTable('order_reports', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedByName: text('resolved_by_name'),
   resolution: text('resolution'),
+  /** Verifikasi petugas atas pemeriksaan anggota (foto): 'pending' menunggu, 'valid' menyelesaikan pesanan, 'invalid' minta foto ulang. Data lama = 'valid'. */
+  verifyStatus: text('verify_status').notNull().default('valid'),
+  verifyNote: text('verify_note'),
+  verifiedByName: text('verified_by_name'),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
 }, (t) => [index('order_reports_group_idx').on(t.tenantId, t.groupId, t.createdAt), index('order_reports_depot_idx').on(t.depotId, t.status)]);
+
+/** Foto bukti penerimaan dari anggota (JPEG base64 yang sudah dikecilkan di aplikasi); satu per pemeriksaan. */
+export const orderReportPhotos = pgTable('order_report_photos', {
+  reportId: uuid('report_id').primaryKey().references(() => orderReports.id, { onDelete: 'cascade' }),
+  data: text('data').notNull(),
+  createdAt: createdAt(),
+});
 
 export const orderReportLines = pgTable('order_report_lines', {
   id: pk(),
@@ -326,6 +340,8 @@ export const orders = pgTable('orders', {
   uplines: jsonb('uplines').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   pay: payStatusEnum('pay').notNull().default('unpaid'),
   shipped: boolean('shipped').notNull().default(false),
+  /** Waktu pengiriman; dasar masa tunggu pemeriksaan anggota sebelum pengurus boleh menyelesaikan pesanan (kosong pada pesanan lama). */
+  shippedAt: timestamp('shipped_at', { withTimezone: true }),
   received: boolean('received').notNull().default(false),
   /** Imbalan saldo penarikan yang sudah dikreditkan untuk baris ini (0 = belum). Mencegah kredit ganda. */
   reward: money('reward'),

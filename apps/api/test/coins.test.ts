@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, as, boot } from './helpers';
+import { Client, as, boot, PHOTO, receiveViaMember } from './helpers';
 
 process.env.VOUCHER_IMAGE_DIR = mkdtempSync(join(tmpdir(), 'sajadah-voucher-'));
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, ...new Array(200).fill(1)]).toString('base64');
@@ -40,12 +40,12 @@ describe('Koin per produk dan penukaran voucher', () => {
     const before = (await coins()).balance;
     const id = await buy(3);
     expect((await coins()).balance).toBe(before);
-    expect((await staff.post(`/orders/${id}/receive`, { proofRef: 'KOIN-1', receiverName: 'Siti' })).status).toBe(201);
+    expect((await receiveViaMember(member, staff, id)).status).toBe(201);
     const c = await coins();
     expect(c.balance).toBe(before + 15);
     expect(c.entries[0]).toMatchObject({ kind: 'earn', amount: 15 });
     expect((await member.get('/me')).body.coinBalance).toBe(before + 15);
-    expect((await staff.post(`/orders/${id}/receive`, { proofRef: 'KOIN-1', receiverName: 'Siti' })).status).toBe(422);
+    expect((await member.post(`/me/orders/${id}/check`, { photo: PHOTO })).status).toBe(422);
     expect((await coins()).balance).toBe(before + 15);
   });
 
@@ -82,7 +82,7 @@ describe('Koin per produk dan penukaran voucher', () => {
 
   it('penukaran ditolak: koin dan stok kembali', async () => {
     const vid = (await coins()).vouchers.find((x: any) => x.name === 'Voucher Umroh').id;
-    await staff.post(`/orders/${await buy(4)}/receive`, { proofRef: 'KOIN-2', receiverName: 'Siti' }); // +20 koin
+    await receiveViaMember(member, staff, await buy(4)); // +20 koin
     const b0 = (await coins()).balance;
     const r = await member.post(`/me/vouchers/${vid}/redeem`);
     expect(r.status).toBe(201);

@@ -1,8 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useData, rupiah } from './hooks';
+import { useData } from './hooks';
 import { api } from './api';
-import type { ShopProduct } from './shopData';
 
 export type NotifTab = 'info' | 'trx';
 export type NotifRoute = 'orders' | 'reward' | 'coins' | 'product' | 'staff-orders' | 'staff-receive';
@@ -26,7 +25,8 @@ export const iconOf = (cat: string) => ICON[cat] ?? ['notifications-outline', 'o
 /** Tujuan layar untuk satu notifikasi; pesanan membuka kartu pesanannya. */
 export function destination(n: Pick<Notif, 'route' | 'refId'>): { pathname: string; params?: Record<string, string> } {
   if (n.route === 'orders') return { pathname: '/(member)/orders', params: n.refId ? { open: n.refId } : undefined };
-  if (n.route === 'staff-orders') return { pathname: '/(staff)/orders', params: n.refId ? { status: n.refId } : undefined };
+  // refId berupa id grup pesanan → buka pesanan itu langsung (di filter verifikasi); selain itu = nama filter status.
+  if (n.route === 'staff-orders') return { pathname: '/(staff)/orders', params: !n.refId ? undefined : /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(n.refId) ? { status: 'verify', open: n.refId } : { status: n.refId } };
   if (n.route === 'staff-receive') return { pathname: '/(staff)/receive', params: n.refId ? { id: n.refId } : undefined };
   if (n.route === 'product') return { pathname: '/(member)/product', params: n.refId ? { id: n.refId } : undefined };
   return { pathname: n.route === 'coins' ? '/(member)/coins' : '/(member)/reward' };
@@ -34,7 +34,7 @@ export function destination(n: Pick<Notif, 'route' | 'refId'>): { pathname: stri
 
 /** Pengelompokan tanggal ala kotak masuk: "Hari ini", "Kemarin", "Sebelumnya". */
 export function dayGroup(iso: string | null, now = Date.now()) {
-  if (!iso) return 'Promo berjalan';
+  if (!iso) return 'Sebelumnya';
   const start = new Date(now); start.setHours(0, 0, 0, 0);
   const t = Date.parse(iso);
   if (t >= start.getTime()) return 'Hari ini';
@@ -52,19 +52,15 @@ export function ago(iso: string | null, now = Date.now()) {
   return `${Math.floor(m / 1440)} hari lalu`;
 }
 
-/** Kotak masuk anggota dari server (status baca disimpan di server), ditambah promo diskon yang diturunkan dari katalog. */
-export function useNotifs(products: ShopProduct[]) {
+/** Kotak masuk anggota dari server (status baca disimpan di server). */
+export function useNotifs() {
   const qc = useQueryClient();
   const q = useData<Inbox>('/me/notifications');
   const { refetch: refetchInbox } = q;
   const items = useMemo<Notif[]>(() => {
     const server = (q.data?.items ?? []).map((n) => ({ ...n, key: n.id }));
-    const promos = products.filter((p) => p.discountPct > 0).map<Notif>((p) => ({
-      key: `p${p.id}`, id: null, tab: 'info', cat: 'Promo', title: `Diskon ${p.discountPct}% ${p.name}`, body: `${p.name} kini ${rupiah(p.price)} (normal ${rupiah(p.listPrice)}). Belanja sebelum kehabisan.`,
-      at: null, read: true, route: 'product', refId: p.id,
-    }));
-    return [...server, ...promos];
-  }, [q.data, products]);
+    return server;
+  }, [q.data]);
   const unread = (tab?: NotifTab) => (tab ? q.data?.unread[tab] ?? 0 : (q.data?.unread.info ?? 0) + (q.data?.unread.trx ?? 0));
 
   /** Tandai terbaca (tanpa `ids` = semua). Tampilan diperbarui lebih dulu, lalu disinkronkan ke server. */

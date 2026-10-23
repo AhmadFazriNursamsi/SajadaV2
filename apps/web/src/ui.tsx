@@ -128,7 +128,7 @@ export function Gate({ q, children }: { q: { isLoading: boolean; error: unknown;
  * Dialog (pop up) bersama. Tutup dengan Esc, klik latar, atau tombol Batal. Fokus pindah ke kolom pertama dan
  * kembali ke pemicu saat ditutup; Tab tidak keluar dari dialog.
  */
-export function Modal({ title, open, onClose, children, footer, wide, xl }: { title: string; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; /** lebar penuh untuk tabel kerja (mis. hitung opname, kartu stok) */ xl?: boolean }) {
+export function Modal({ title, open, onClose, children, footer, wide, xl, lg }: { title: string; open: boolean; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; /** formulir lebar: header dan tombol tetap terlihat, isi bergulir */ lg?: boolean; /** lebar penuh untuk tabel kerja (mis. hitung opname, kartu stok) */ xl?: boolean }) {
   const box = useRef<HTMLDialogElement>(null);
   // `onClose` biasanya fungsi inline yang berubah tiap render; simpan di ref agar efek fokus hanya berjalan saat dialog dibuka/ditutup
   // (kalau tidak, fokus terus dipaksa kembali ke kolom pertama setiap isian berubah).
@@ -147,7 +147,7 @@ export function Modal({ title, open, onClose, children, footer, wide, xl }: { ti
   }, [open]);
   if (!open) return null;
   return (
-    <dialog className={`modal ${wide ? 'wide' : ''} ${xl ? 'xl' : ''}`} aria-label={title} ref={box}>
+    <dialog className={`modal ${wide ? 'wide' : ''} ${xl ? 'xl' : ''} ${lg ? 'lg' : ''}`} aria-label={title} ref={box}>
       <div className="modal-h"><b>{title}</b><button type="button" className="modal-x" aria-label="Tutup" onClick={onClose}>✕</button></div>
       <div className="modal-b">{children}</div>
       {footer && <div className="modal-f">{footer}</div>}

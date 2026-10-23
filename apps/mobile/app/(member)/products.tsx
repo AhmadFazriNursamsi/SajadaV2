@@ -7,15 +7,14 @@ import { Chips } from '../../src/ui';
 import { BackBar, CartIcon, ProductCard } from '../../src/shop';
 import { useShop, type ShopProduct } from '../../src/shopData';
 
-const ALL = '__all', SALE = '__sale';
+const ALL = '__all';
 
 function matches(p: ShopProduct, q: string, cat: string) {
-  if (cat === SALE && p.discountPct === 0) return false;
-  if (cat !== ALL && cat !== SALE && p.category !== cat) return false;
+  if (cat !== ALL && p.category !== cat) return false;
   return !q || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase());
 }
 
-/** Daftar produk: cari nama, saring per kategori atau hanya yang diskon, tampil dua kolom. */
+/** Daftar produk: cari nama, saring per kategori, tampil dua kolom. */
 export default function Products() {
   const params = useLocalSearchParams<{ q?: string; category?: string; focus?: string }>();
   const router = useRouter();
@@ -30,7 +29,7 @@ export default function Products() {
     const found: (ShopProduct | null)[] = (shop.data?.products ?? []).filter((p) => matches(p, q.trim(), cat));
     return found.length % 2 ? [...found, null] : found; // sel kosong agar kartu terakhir tidak melebar penuh
   }, [shop.data, q, cat]);
-  const options = useMemo(() => [{ v: ALL, l: 'Semua' }, { v: SALE, l: 'Diskon' }, ...(shop.data?.categories ?? []).map((c) => ({ v: c, l: c }))], [shop.data]);
+  const options = useMemo(() => [{ v: ALL, l: 'Semua' }, ...(shop.data?.categories ?? []).map((c) => ({ v: c, l: c }))], [shop.data]);
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <BackBar>

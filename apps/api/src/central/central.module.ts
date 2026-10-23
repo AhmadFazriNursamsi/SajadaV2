@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Injectable, Module, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { SHIPMENT_ISSUES, type ShipmentIssue, cancelShipmentSchema, centralReceiptSchema, createProductSchema, createShipmentSchema, createStockRequestSchema, fulfillStockRequestSchema, receiveShipmentSchema, rejectStockRequestSchema, updateProductSchema } from '@sajadah/shared';
+import { REWARD_PERCENT, SHIPMENT_ISSUES, type ShipmentIssue, cancelShipmentSchema, centralReceiptSchema, createProductSchema, createShipmentSchema, createStockRequestSchema, fulfillStockRequestSchema, receiveShipmentSchema, rejectStockRequestSchema, updateProductSchema } from '@sajadah/shared';
 import type { z } from 'zod';
 import { Database } from '../db/db';
 import { centralMovements, centralStock, depotStock, depots, products, shipmentLines, shipments, stockRequestLines, stockRequests } from '../db/schema';
@@ -36,7 +36,7 @@ export class CentralService {
       if (dupSku) throw new BusinessError(`SKU ${sku} sudah dipakai produk lain.`);
       const [dupName] = await tx.select({ id: products.id }).from(products).where(and(eq(products.tenantId, a.tid), sql`lower(${products.name}) = lower(${input.name})`));
       if (dupName) throw new BusinessError(`Produk bernama “${input.name}” sudah ada.`);
-      const [p] = await tx.insert(products).values({ tenantId: a.tid, sku, name: input.name, buyPrice: input.buyPrice, sellPrice: input.sellPrice, safety: input.safety, target: input.target, category: input.category || null, description: input.description || null, listPrice: input.listPrice ?? 0, coins: input.coins ?? 0 }).returning();
+      const [p] = await tx.insert(products).values({ tenantId: a.tid, sku, name: input.name, buyPrice: input.buyPrice, sellPrice: input.sellPrice, safety: input.safety, target: input.target, category: input.category || null, description: input.description || null, coins: input.coins ?? 0, rewardPercent: input.rewardPercent ?? REWARD_PERCENT }).returning();
       await this.core.audit(tx, a, `Produk baru ${p!.name} (${sku}): harga jual Rp${input.sellPrice.toLocaleString('id-ID')}`);
       return p!;
     });
@@ -47,8 +47,7 @@ export class CentralService {
       const [p] = await tx.select().from(products).where(and(eq(products.tenantId, a.tid), eq(products.id, id))).for('update');
       if (!p) throw new BusinessError('Produk tidak ditemukan.');
       const next = { name: input.name ?? p.name, buyPrice: input.buyPrice ?? p.buyPrice, sellPrice: input.sellPrice ?? p.sellPrice, safety: input.safety ?? p.safety, target: input.target ?? p.target,
-        category: input.category === undefined ? p.category : input.category || null, description: input.description === undefined ? p.description : input.description || null, listPrice: input.listPrice ?? p.listPrice, coins: input.coins ?? p.coins };
-      if (next.listPrice && next.listPrice <= next.sellPrice) throw new BusinessError('Harga normal harus di atas harga jual (atau kosongkan).');
+        category: input.category === undefined ? p.category : input.category || null, description: input.description === undefined ? p.description : input.description || null, coins: input.coins ?? p.coins, rewardPercent: input.rewardPercent ?? p.rewardPercent };
       if (next.target < next.safety) throw new BusinessError('Target stok tidak boleh di bawah stok aman.');
       if (next.name.toLowerCase() !== p.name.toLowerCase()) {
         const [dup] = await tx.select({ id: products.id }).from(products).where(and(eq(products.tenantId, a.tid), sql`lower(${products.name}) = lower(${next.name})`));
@@ -56,13 +55,13 @@ export class CentralService {
       }
       const changes: string[] = [];
       if (next.name !== p.name) changes.push(`nama ${p.name} → ${next.name}`);
-      if (next.sellPrice !== p.sellPrice) changes.push(`harga jual ${p.sellPrice} → ${next.sellPrice}`);
+      if (next.sellPrice !== p.sellPrice) changes.push(`harga ${p.sellPrice} → ${next.sellPrice}`);
       if (next.safety !== p.safety) changes.push(`stok aman ${p.safety} → ${next.safety}`);
       if (next.target !== p.target) changes.push(`target ${p.target} → ${next.target}`);
       if (next.category !== p.category) changes.push('kategori');
       if (next.description !== p.description) changes.push('deskripsi');
-      if (next.listPrice !== p.listPrice) changes.push(`harga normal ${p.listPrice} → ${next.listPrice}`);
       if (next.coins !== p.coins) changes.push(`koin ${p.coins} → ${next.coins}`);
+      if (next.rewardPercent !== p.rewardPercent) changes.push(`imbalan saldo penarikan ${p.rewardPercent}% → ${next.rewardPercent}%`);
       if (!changes.length) throw new BusinessError('Tidak ada yang diubah.');
       const [u] = await tx.update(products).set(next).where(eq(products.id, id)).returning();
       await this.core.audit(tx, a, `Produk ${p.sku} diubah: ${changes.join('; ')} (pesanan lama tetap memakai harga saat dibuat)`);

@@ -12,7 +12,7 @@ import { ComboField } from '../../src/FormFields';
 
 interface Entry { id: string; kind: string; amount: number; refNo: string | null; note: string | null; createdAt: string }
 interface Withdrawal { id: string; no: string; amount: number; bank: string; accountNo: string; accountName: string; status: 'pending' | 'paid' | 'rejected'; reason: string | null; createdAt: string }
-interface Rewards { percent: number; balance: number; entries: Entry[]; withdrawals: Withdrawal[] }
+interface Rewards { balance: number; entries: Entry[]; withdrawals: Withdrawal[] }
 type Mode = 'withdraw' | 'transfer' | null;
 type Msg = { ok: boolean; text: string } | null;
 
@@ -92,7 +92,7 @@ function History({ r }: { r: Rewards }) {
       </Card>
       <Text style={s.h}>Riwayat saldo</Text>
       <Card>
-        {r.entries.length === 0 ? <Row title="Belum ada riwayat" sub={`${r.percent}% dari belanja yang sudah diterima akan masuk di sini.`} /> : r.entries.map((e) => (
+        {r.entries.length === 0 ? <Row title="Belum ada riwayat" sub="Imbalan dari belanja yang sudah diterima akan masuk di sini." /> : r.entries.map((e) => (
           <Row key={e.id} title={e.note ?? e.kind} sub={`${day(e.createdAt)}${e.refNo ? ` · ${e.refNo}` : ''}`} right={`${e.amount > 0 ? '+' : '−'}${rupiah(Math.abs(e.amount))}`} tone={e.amount > 0 ? 'ok' : 'neutral'} />
         ))}
       </Card>
@@ -100,7 +100,7 @@ function History({ r }: { r: Rewards }) {
   );
 }
 
-/** Saldo penarikan: dari 20% belanja yang sudah diterima. Bisa ditarik ke rekening (disetujui pengurus) atau dipindah ke saldo belanja. */
+/** Saldo penarikan: imbalan per produk dari belanja yang sudah diterima. Bisa ditarik ke rekening (disetujui pengurus) atau dipindah ke saldo belanja. */
 export default function RewardScreen() {
   const q = useData<Rewards>('/me/rewards');
   const { refetch } = q;
@@ -118,8 +118,8 @@ export default function RewardScreen() {
           <View style={s.hero}>
             <Text style={{ color: '#ffffff', opacity: 0.85, fontSize: 13 }}>Saldo penarikan</Text>
             <Text style={{ color: '#ffffff', fontSize: 30, fontWeight: '700' }}>{rupiah(r.balance)}</Text>
-            <Text style={{ color: C.gold, fontSize: 12 }}>{r.percent}% dari setiap belanja yang sudah diterima</Text>
-            <Text style={{ color: '#ffffff', opacity: 0.85, fontSize: 12, marginTop: 4 }}>Tiap hari aktif, Rp30.000 dipotong untuk tagihan harian.</Text>
+            <Text style={{ color: C.gold, fontSize: 12 }}>imbalan dari setiap belanja yang sudah diterima</Text>
+            <Text style={{ color: '#ffffff', opacity: 0.85, fontSize: 12, marginTop: 4 }}>Bila imbalan hari ini mencapai Rp30.000, Rp30.000 dipotong otomatis untuk tagihan harian.</Text>
           </View>
           {msg && <View style={{ backgroundColor: msg.ok ? C.ok[0] : C.bad[0], borderRadius: 8, padding: 12 }}><Text style={{ color: msg.ok ? C.green : C.bad[1] }}>{msg.text}</Text></View>}
           <Button label="Tarik ke rekening" onPress={pick('withdraw')} />

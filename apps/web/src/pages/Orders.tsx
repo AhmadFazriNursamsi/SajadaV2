@@ -4,12 +4,12 @@ import { get } from '../api';
 import { Badge, Block, Btn, Field, Fields, Gate, Kpi, Kpis, Modal, PageHead, Segmented, Table } from '../ui';
 import { R, useAct, useForm } from '../hooks';
 import { useSession } from '../session';
-import { SHIPMENT_ISSUES } from '@sajadah/shared';
+import { MEMBER_CHECK_GRACE_DAYS, SHIPMENT_ISSUES } from '@sajadah/shared';
 import { orderLabel, type OrderReport, type OrderRow, type ProductRow } from '../types';
 
 /** Satu pesanan = satu checkout; baris-baris produknya selalu berstatus sama. `o` = baris pertama (dipakai untuk aksi, berlaku untuk seluruh pesanan). */
 type Order = OrderRow & { lines: OrderRow[]; sumQty: number; sumTotal: number };
-type Kind = 'reject' | 'ship' | 'receive' | 'cancel' | 'report' | 'detail';
+type Kind = 'reject' | 'ship' | 'receive' | 'override' | 'cancel' | 'report' | 'detail';
 type Dlg = { kind: Kind; o: Order } | null;
 type Filter = 'todo' | 'all';
 type Open = (kind: Kind, o: Order) => void;
@@ -19,6 +19,9 @@ const muted = { fontSize: 12, color: 'var(--muted)' } as const;
 const box = { border: '1px solid var(--line)', borderRadius: 8, padding: '10px 14px', display: 'grid', gap: 4, fontSize: 14 } as const;
 const dash = <span style={{ color: 'var(--muted)' }}>—</span>;
 const stamp = (d: string | null) => (d ? new Date(d).toLocaleString('id-ID') : null);
+/** Pesanan anggota yang sudah dikirim, belum diperiksa anggotanya: kapan pengurus boleh menyelesaikannya. */
+const awaitingMemberCheck = (o: OrderRow) => !!o.buyerId && o.status === 'shipped';
+const overrideFrom = (o: OrderRow) => new Date(new Date(o.shippedAt ?? o.createdAt).getTime() + MEMBER_CHECK_GRACE_DAYS * 86_400_000);
 const buyer = (o: OrderRow) => (o.buyerId ? `Anggota${o.buyerName ? ` · ${o.buyerName}` : ''}` : `${o.customerName ?? 'Pelanggan umum'} (pelanggan umum)`);
 
 function groupOrders(rows: OrderRow[]): Order[] {
@@ -30,7 +33,7 @@ function groupOrders(rows: OrderRow[]): Order[] {
   });
 }
 
-const needsAction = (o: Order) => o.report?.status === 'open' || ['awaiting_approval', 'paid', 'shipped', 'awaiting_payment'].includes(o.status);
+const needsAction = (o: Order) => o.report?.status === 'open' || o.report?.verifyStatus === 'pending' || ['awaiting_approval', 'paid', 'shipped', 'awaiting_payment'].includes(o.status);
 
 // ---- KPI & tabel --------------------------------------------------------------------------------
 
@@ -50,6 +53,8 @@ function OrderKpis({ os }: { os: Order[] }) {
 }
 
 function ReportBadge({ o }: { o: Order }) {
+  if (o.report?.verifyStatus === 'pending') return <div style={{ marginTop: 4 }}><Badge tone="warn">Foto penerimaan menunggu verifikasi petugas</Badge></div>;
+  if (o.report?.verifyStatus === 'invalid') return <div style={{ marginTop: 4 }}><Badge tone="bad">Foto ditolak; menunggu foto ulang dari anggota</Badge>{o.report.verifyNote ? <div style={muted}>{o.report.verifyNote}</div> : null}</div>;
   if (o.report?.status === 'open') return <div style={{ marginTop: 4 }}><Badge tone="bad">Laporan anggota: barang tidak sesuai</Badge></div>;
   if (o.report?.status === 'resolved') return <div style={muted}>Laporan anggota sudah ditanggapi</div>;
   return o.report?.status === 'ok' ? <div style={muted}>Anggota: barang sesuai</div> : null;
@@ -60,16 +65,24 @@ function StatusCell({ o }: { o: Order }) {
     <>
       <Badge tone={orderLabel[o.status][1]}>{orderLabel[o.status][0]}</Badge>
       {o.status === 'cancelled' && o.cancelReason ? <div style={muted}>{o.cancelReason}</div> : null}
-      {o.status === 'shipped' && !o.report ? <div style={muted}>Menunggu anggota memeriksa barang (otomatis dianggap diterima), atau konfirmasi sendiri.</div> : null}
+      {o.status === 'shipped' && (!o.report || o.report.verifyStatus === 'invalid') ? <div style={muted}>{o.buyerId ? `Menunggu anggota mengirim foto barang yang diterima; setelah itu petugas toko memverifikasi dan menyelesaikan pesanan.${Date.now() < overrideFrom(o).getTime() ? ` Pengurus baru dapat menyelesaikannya mulai ${overrideFrom(o).toLocaleDateString('id-ID')} bila anggota belum memeriksa.` : ''}` : 'Menunggu konfirmasi penerimaan.'}</div> : null}
       <ReportBadge o={o} />
     </>
   );
 }
 
 function ReportButton({ o, staff, open }: { o: Order; staff: boolean; open: Open }) {
-  if (!o.report || o.report.status === 'ok') return null;
+  if (!o.report) return null;
+  if (o.report.verifyStatus === 'pending' && staff) return <Btn sm onClick={() => open('report', o)}>Periksa foto & verifikasi</Btn>;
+  if (o.report.status === 'ok') return null;
   const isOpen = o.report.status === 'open';
   return <Btn sm kind={isOpen ? 's' : 'g'} onClick={() => open('report', o)}>{isOpen && staff ? 'Lihat & tanggapi laporan' : 'Lihat laporan'}</Btn>;
+}
+
+/** Pengurus: menyelesaikan pesanan anggota yang tak kunjung diperiksa anggotanya (setelah masa tunggu, dengan alasan tertulis). */
+function AdminActions({ o, open }: { o: Order; open: Open }) {
+  if (!awaitingMemberCheck(o) || Date.now() < overrideFrom(o).getTime()) return null;
+  return <Btn sm kind="s" onClick={() => open('override', o)}>Selesaikan tanpa cek anggota…</Btn>;
 }
 
 /** Tombol aksi petugas sesuai status pesanan. */
@@ -84,7 +97,7 @@ function StaffActions({ o, open }: { o: Order; open: Open }) {
       </>)}
       {st === 'awaiting_payment' && <Btn sm onClick={() => act.post(`/orders/${o.id}/pay-balance`, `${o.no} dibayar dari saldo anggota`)}>Bayar dari saldo</Btn>}
       {st === 'paid' && <Btn sm onClick={() => open('ship', o)}>Kirim…</Btn>}
-      {st === 'shipped' && <Btn sm onClick={() => open('receive', o)}>Konfirmasi diterima…</Btn>}
+      {st === 'shipped' && !o.buyerId && <Btn sm onClick={() => open('receive', o)}>Konfirmasi diterima…</Btn>}
       {(st === 'awaiting_payment' || st === 'paid') && <Btn sm kind="g" onClick={() => open('cancel', o)}>Batalkan…</Btn>}
     </>
   );
@@ -102,7 +115,7 @@ function OrdersTable({ rows, filter, staff, names, open }: { rows: Order[]; filt
     ]} onRow={(o) => open('detail', o)} actions={(o) => (<>
       <Btn sm kind="g" onClick={() => open('detail', o)}>Detail</Btn>
       <ReportButton o={o} staff={staff} open={open} />
-      {staff && <StaffActions o={o} open={open} />}
+      {staff ? <StaffActions o={o} open={open} /> : <AdminActions o={o} open={open} />}
     </>)} />
   );
 }
@@ -110,6 +123,8 @@ function OrdersTable({ rows, filter, staff, names, open }: { rows: Order[]; filt
 // ---- Dialog laporan & detail --------------------------------------------------------------------
 
 function ReportStatusBadge({ r }: { r: OrderReport }) {
+  if (r.verifyStatus === 'pending') return <Badge tone="warn">Menunggu verifikasi petugas</Badge>;
+  if (r.verifyStatus === 'invalid') return <Badge tone="bad">Foto ditolak, menunggu foto ulang</Badge>;
   if (r.status === 'open') return <Badge tone="bad">Menunggu tanggapan toko</Badge>;
   return <Badge tone="ok">{r.status === 'resolved' ? 'Sudah ditanggapi' : 'Anggota: semua sesuai'}</Badge>;
 }
@@ -118,7 +133,7 @@ function ReportBody({ r, canRespond, reason }: { r: OrderReport; canRespond: boo
   return (
     <>
       <div style={box}>
-        <div><b>Dilaporkan</b> {new Date(r.createdAt).toLocaleString('id-ID')} oleh <b>{r.memberName}</b></div>
+        <div><b>Dikirim</b> {new Date(r.createdAt).toLocaleString('id-ID')} oleh <b>{r.memberName}</b></div>
         <div><b>Catatan anggota:</b> {r.note || <span style={{ color: 'var(--muted)' }}>tidak ada</span>}</div>
         <div><ReportStatusBadge r={r} /></div>
         {r.resolution ? <div><b>Tanggapan toko</b> ({r.resolvedByName}, {r.resolvedAt ? new Date(r.resolvedAt).toLocaleString('id-ID') : '—'}): {r.resolution}</div> : null}
@@ -138,17 +153,25 @@ function ReportBody({ r, canRespond, reason }: { r: OrderReport; canRespond: boo
 
 function ReportDialog({ o, staff, onClose }: { o: Order; staff: boolean; onClose: () => void }) {
   const act = useAct();
-  const f = useForm({ reason: '' });
+  const f = useForm({ reason: '', invalid: '' });
   const detail = useQuery({ queryKey: ['/orders/report', o.id], queryFn: () => get<OrderReport | null>(`/orders/${o.id}/report`) });
   const r = detail.data;
   const canRespond = staff && r?.status === 'open';
+  const canVerify = staff && r?.verifyStatus === 'pending';
+  const photo = useQuery({ queryKey: ['/orders/photo', o.id], queryFn: () => get<{ photo: string | null }>(`/orders/${o.id}/receipt-photo`), enabled: !!r });
+  const invalidReason = f.v.invalid.trim();
   const body = detail.isLoading ? <div className="empty">Memuat…</div> : r ? <ReportBody r={r} canRespond={!!canRespond} reason={<Field {...f.bind('reason', 'Tanggapan untuk anggota', 'mis. barang pengganti dikirim besok')} focus />} /> : <p className="note">Belum ada laporan.</p>;
   return (
-    <Modal xl title={`Laporan anggota — ${o.no}`} open onClose={onClose} footer={<>
+    <Modal xl title={`${canVerify ? 'Verifikasi penerimaan' : 'Laporan anggota'} — ${o.no}`} open onClose={onClose} footer={<>
       <Btn kind="g" onClick={onClose}>Tutup</Btn>
+      {canVerify && <Btn kind="d" disabled={act.busy || invalidReason.length < 3} onClick={() => act.post(`/orders/${o.id}/verify-receipt`, 'Foto ditolak; anggota diminta mengirim ulang', { valid: false, note: invalidReason }, onClose)}>Foto tidak valid</Btn>}
+      {canVerify && <Btn disabled={act.busy} onClick={() => act.post(`/orders/${o.id}/verify-receipt`, `${o.no} valid dan diselesaikan`, { valid: true }, onClose)}>Valid — selesaikan pesanan</Btn>}
       {canRespond && <Btn disabled={act.busy || f.v.reason.trim().length < 3} onClick={() => act.post(`/orders/${o.id}/report/resolve`, 'Laporan ditanggapi dan ditandai selesai', { note: f.v.reason.trim() }, onClose)}>Tanggapi & selesaikan</Btn>}
     </>}>
+      {r && photo.data?.photo ? <div style={{ ...box, justifyItems: 'start' }}><b>Foto barang yang diterima (dari anggota)</b><img src={photo.data.photo} alt="Foto barang yang diterima anggota" style={{ maxWidth: '100%', maxHeight: 420, borderRadius: 8, border: '1px solid var(--line)' }} /></div> : null}
       {body}
+      {canVerify && <><p className="note" style={{ margin: 0 }}>Cocokkan foto dengan isi pesanan. Bila valid, pesanan selesai dan imbalan anggota cair. Bila tidak valid, tulis alasannya; anggota akan diminta mengirim foto ulang.</p>
+        <Field {...f.bind('invalid', 'Alasan bila foto tidak valid', 'mis. foto buram atau barang tidak terlihat')} /></>}
     </Modal>
   );
 }
@@ -264,6 +287,18 @@ function ReceiveDialog({ o, onClose }: { o: Order; onClose: () => void }) {
   );
 }
 
+function OverrideDialog({ o, onClose }: { o: Order; onClose: () => void }) {
+  const act = useAct();
+  const f = useForm({ reason: '' });
+  const reason = f.v.reason.trim();
+  return (
+    <Modal title={`Selesaikan ${o.no} tanpa cek anggota`} open onClose={onClose} footer={<><Btn kind="g" onClick={onClose}>Batal</Btn><Btn disabled={act.busy || reason.length < 10} onClick={() => act.post(`/orders/${o.id}/receive-override`, `${o.no} diselesaikan pengurus`, { reason }, onClose)}>Selesaikan pesanan</Btn></>}>
+      <p className="note" style={{ margin: 0 }}>Gunakan hanya bila anggota tak kunjung memeriksa barangnya dan barang sudah dipastikan sampai. Pesanan menjadi selesai dan imbalan anggota cair seperti biasa. Alasan dicatat di log aktivitas.</p>
+      <Field {...f.bind('reason', 'Alasan (minimal 10 karakter)', 'mis. anggota tidak bisa dihubungi, barang sudah diterima keluarganya')} type="textarea" focus />
+    </Modal>
+  );
+}
+
 function CancelDialog({ o, onClose }: { o: Order; onClose: () => void }) {
   const act = useAct();
   const f = useForm({ reason: '' });
@@ -283,6 +318,7 @@ function Dialogs({ dlg, staff, names, open, close }: { dlg: Dlg; staff: boolean;
     case 'reject': return <RejectDialog o={o} onClose={close} />;
     case 'ship': return <ShipDialog o={o} names={names} onClose={close} />;
     case 'receive': return <ReceiveDialog o={o} onClose={close} />;
+    case 'override': return <OverrideDialog o={o} onClose={close} />;
     case 'cancel': return <CancelDialog o={o} onClose={close} />;
   }
 }

@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { Body, Controller, Get, Injectable, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
-import { REWARD_PERCENT, SHIPMENT_ISSUES, planInstallment, cancelSchema, checkoutSchema, orderCheckSchema, rejectSchema, resolveReportSchema, commissionLines, receiveOrderSchema, shipSchema, uplineChain, type CheckoutInput } from '@sajadah/shared';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { INSTALLMENT_MIN_REWARD, MEMBER_CHECK_GRACE_DAYS, receiveOverrideSchema, SHIPMENT_ISSUES, planInstallment, cancelSchema, checkoutSchema, orderCheckSchema, rejectSchema, resolveReportSchema, verifyReceiptSchema, commissionLines, receiveOrderSchema, shipSchema, uplineChain, type CheckoutInput } from '@sajadah/shared';
 import { Database } from '../db/db';
-import { coinEntries, installmentEntries, depotStock, depots, members, orderReportLines, orderReports, orders, products, rewardEntries, tenants } from '../db/schema';
+import { coinEntries, installmentEntries, depotStock, depots, members, orderReportLines, orderReportPhotos, orderReports, orders, products, rewardEntries, tenants } from '../db/schema';
 import type { Order } from '../db/schema';
 import { InjectDb } from '../core/db.module';
 import { CoreService } from '../core/core.service';
 import { BusinessError } from '../common/errors';
 import { ZodPipe } from '../common/zod.pipe';
-import { CurrentActor, FINANCE, OPS, Roles, STAFF } from '../auth/auth.decorators';
+import { ADMIN, CurrentActor, DEPOT_ONLY, FINANCE, OPS, Roles, STAFF } from '../auth/auth.decorators';
 import type { Actor } from '../auth/auth.types';
 import type { z } from 'zod';
 
@@ -48,6 +48,7 @@ export class OrdersService {
    * dan anggota lewat aplikasi (menunggu persetujuan toko).
    */
   async createOrders(tx: Database, a: Actor, depot: { id: string; name: string }, sellerId: string, buyerRef: BuyerRef, items: CheckoutInput['items'], approved: boolean) {
+    await this.core.assertDepotOpen(tx, depot.id, a.role === 'member');
     const ms = await tx.select().from(members).where(eq(members.tenantId, a.tid));
     const byId = new Map(ms.map((m) => [m.id, m]));
     const seller = byId.get(sellerId);
@@ -101,25 +102,30 @@ export class OrdersService {
    * Kunci seluruh baris satu pesanan (semua produk dalam satu checkout). Semua tindakan berlaku atas pesanan utuh:
    * baris-barisnya selalu berstatus sama, jadi petugas tidak perlu memproses produk satu per satu.
    */
-  private async lockGroup(q: Database, actor: Actor, id: string): Promise<Order[]> {
+  private async lockGroup(q: Database, actor: Actor, id: string, requireOpen = false): Promise<Order[]> {
     const [head] = await q.select().from(orders).where(and(eq(orders.tenantId, actor.tid), eq(orders.id, id)));
     if (!head) throw new BusinessError('Pesanan tidak ditemukan');
     this.core.assertDepot(actor, head.depotId);
+    if (requireOpen) await this.core.assertDepotOpen(q, head.depotId); // toko dikunci bila stok opname bulanan terlewat
     const rows = await q.select().from(orders).where(and(eq(orders.tenantId, actor.tid), eq(orders.groupId, head.groupId))).orderBy(asc(orders.lineNo)).for('update');
     if (rows.every((o) => o.cancelled)) throw new BusinessError('Pesanan sudah dibatalkan.');
     return rows;
   }
-  /** Belanja sendiri yang sudah diterima: 20% dari nilai masuk ke saldo penarikan anggota (sekali saja per pesanan). */
+  /**
+   * Belanja sendiri yang sudah diterima: tiap produk memberi persen imbalannya sendiri (products.rewardPercent, diatur admin)
+   * dari nilai barisnya, dibulatkan ke bawah per baris, ke saldo penarikan anggota (sekali saja per pesanan).
+   */
   private async creditReward(tx: Database, rows: Order[]) {
     const head = rows[0]!;
     if (!isSelfOrder(head) || rows.some((o) => o.reward > 0)) return 0;
-    const per = rows.map((o) => ({ o, r: Math.floor((orderTotal(o) * REWARD_PERCENT) / 100) }));
+    const ps = await tx.select({ id: products.id, rewardPercent: products.rewardPercent }).from(products).where(inArray(products.id, rows.map((o) => o.productId)));
+    const per = rows.map((o) => ({ o, r: Math.floor((orderTotal(o) * (ps.find((p) => p.id === o.productId)?.rewardPercent ?? 0)) / 100) }));
     const total = per.reduce((s, x) => s + x.r, 0);
     if (total <= 0) return 0;
     for (const x of per) await tx.update(orders).set({ reward: x.r }).where(eq(orders.id, x.o.id));
     const [m] = await tx.select().from(members).where(eq(members.id, head.sellerId)).for('update');
     await tx.update(members).set({ rewardBalance: m!.rewardBalance + total }).where(eq(members.id, m!.id));
-    await tx.insert(rewardEntries).values({ tenantId: head.tenantId, memberId: m!.id, kind: 'earn', amount: total, refNo: head.groupNo, note: `${REWARD_PERCENT}% dari belanja ${head.groupNo}` });
+    await tx.insert(rewardEntries).values({ tenantId: head.tenantId, memberId: m!.id, kind: 'earn', amount: total, refNo: head.groupNo, note: `Imbalan produk dari belanja ${head.groupNo}`, createdAt: new Date() });
     await this.core.notify(tx, { tenantId: head.tenantId, memberId: m!.id, tab: 'info', cat: 'Saldo', title: 'Saldo penarikan bertambah', body: `Kamu mendapat Rp${total.toLocaleString('id-ID')} dari belanja #${head.groupNo}.`, route: 'reward' });
     return total;
   }
@@ -141,8 +147,9 @@ export class OrdersService {
   }
 
   /**
-   * Tagihan harian: pada hari aktif (belanja sendiri diterima) potong Rp30.000 (+ tunggakan) dari saldo penarikan, sekali per hari (WIB).
-   * Dipanggil setelah imbalan dikreditkan supaya imbalan hari itu ikut tersedia untuk dipotong.
+   * Tagihan harian: potong Rp30.000 (+ tunggakan) dari saldo penarikan, sekali per hari (WIB), begitu total imbalan anggota hari itu
+   * sudah mencapai INSTALLMENT_MIN_REWARD (bisa dari beberapa pesanan). Di bawah batas itu tidak ada potongan dan hari tidak dihitung.
+   * Dipanggil setelah imbalan dikreditkan supaya imbalan hari itu sudah tercatat dan tersedia untuk dipotong.
    */
   private async chargeInstallment(tx: Database, rows: Order[]) {
     const head = rows[0]!;
@@ -152,6 +159,9 @@ export class OrdersService {
     if (!m) return null;
     const [done] = await tx.select({ id: installmentEntries.id }).from(installmentEntries).where(and(eq(installmentEntries.memberId, m.id), eq(installmentEntries.day, day)));
     if (done) return null;
+    const [today] = await tx.select({ v: sql<number>`coalesce(sum(${rewardEntries.amount}), 0)`.mapWith(Number) }).from(rewardEntries)
+      .where(and(eq(rewardEntries.memberId, m.id), eq(rewardEntries.kind, 'earn'), sql`(${rewardEntries.createdAt} AT TIME ZONE 'Asia/Jakarta')::date = ${day}::date`));
+    if ((today?.v ?? 0) < INSTALLMENT_MIN_REWARD) return null;
     const plan = planInstallment({ balance: m.rewardBalance, arrears: m.installmentArrears, daysCounted: m.installmentDays });
     if (plan.due <= 0) return null;
     const seq = plan.counted ? m.installmentDays + 1 : 0;
@@ -190,7 +200,7 @@ export class OrdersService {
    */
   async approve(a: Actor, id: string) {
     return this.db.transaction(async (tx) => {
-      const rows = await this.lockGroup(tx, a, id);
+      const rows = await this.lockGroup(tx, a, id, true);
       if (rows.some((o) => o.approvedAt)) throw new BusinessError('Pesanan sudah disetujui.');
       const head = rows[0]!;
       const payerName = await this.debitBalance(tx, head.sellerId, groupTotal(rows), 'persetujuan');
@@ -223,7 +233,7 @@ export class OrdersService {
 
   async payWithBalance(a: Actor, id: string) {
     return this.db.transaction(async (tx) => {
-      const rows = await this.lockGroup(tx, a, id);
+      const rows = await this.lockGroup(tx, a, id, true);
       this.needApproved(rows);
       const head = rows[0]!;
       if (rows.some((o) => o.pay !== 'unpaid')) throw new BusinessError('Pesanan sudah dibayar.');
@@ -238,11 +248,11 @@ export class OrdersService {
   // ───────────── Pemeriksaan barang oleh anggota ─────────────
   /** Laporan terbaru per pesanan (groupId), tanpa rincian baris. */
   async latestReports(q: Database, tid: string, groupIds: string[]) {
-    const out = new Map<string, { id: string; status: string; note: string | null; createdAt: Date; resolution: string | null; resolvedByName: string | null; resolvedAt: Date | null }>();
+    const out = new Map<string, { id: string; status: string; note: string | null; createdAt: Date; resolution: string | null; resolvedByName: string | null; resolvedAt: Date | null; verifyStatus: string; verifyNote: string | null; verifiedByName: string | null; verifiedAt: Date | null }>();
     const ids = [...new Set(groupIds)];
     if (!ids.length) return out;
     const rows = await q.select().from(orderReports).where(and(eq(orderReports.tenantId, tid), inArray(orderReports.groupId, ids))).orderBy(desc(orderReports.createdAt));
-    for (const r of rows) if (!out.has(r.groupId)) out.set(r.groupId, { id: r.id, status: r.status, note: r.note, createdAt: r.createdAt, resolution: r.resolution, resolvedByName: r.resolvedByName, resolvedAt: r.resolvedAt });
+    for (const r of rows) if (!out.has(r.groupId)) out.set(r.groupId, { id: r.id, status: r.status, note: r.note, createdAt: r.createdAt, resolution: r.resolution, resolvedByName: r.resolvedByName, resolvedAt: r.resolvedAt, verifyStatus: r.verifyStatus, verifyNote: r.verifyNote, verifiedByName: r.verifiedByName, verifiedAt: r.verifiedAt });
     return out;
   }
 
@@ -257,9 +267,12 @@ export class OrdersService {
       if (head.sellerId !== memberId) throw new BusinessError('Pesanan tidak ditemukan.');
       if (rows.some((o) => o.cancelled || o.returned)) throw new BusinessError('Pesanan ini sudah dibatalkan atau diretur.');
       if (rows.some((o) => !o.shipped)) throw new BusinessError('Barang belum dikirim, belum bisa diperiksa.');
-      // Pemeriksaan hanya SEKALI per pesanan (sesuai atau dilaporkan); tindak lanjut selisih lewat tanggapan toko.
-      const [done] = await tx.select({ id: orderReports.id, status: orderReports.status }).from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.groupId, head.groupId))).limit(1);
-      if (done) throw new BusinessError(done.status === 'open' ? 'Barang pesanan ini sudah Anda laporkan; tunggu tanggapan toko.' : 'Barang pesanan ini sudah diperiksa. Pemeriksaan hanya bisa dilakukan sekali.');
+      // Satu pemeriksaan per pesanan. Hanya yang fotonya ditolak petugas (invalid) boleh dikirim ulang; pemeriksaan lama diganti.
+      const [done] = await tx.select().from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.groupId, head.groupId))).orderBy(desc(orderReports.createdAt)).limit(1);
+      if (done && done.verifyStatus === 'pending') throw new BusinessError('Foto penerimaan sudah Anda kirim; tunggu verifikasi petugas toko.');
+      if (done && done.verifyStatus !== 'invalid') throw new BusinessError(done.status === 'open' ? 'Barang pesanan ini sudah Anda laporkan; tunggu tanggapan toko.' : 'Barang pesanan ini sudah diperiksa. Pemeriksaan hanya bisa dilakukan sekali.');
+      if (rows.some((o) => o.received)) throw new BusinessError('Pesanan ini sudah selesai.');
+      if (done) await tx.delete(orderReports).where(eq(orderReports.id, done.id)); // foto ditolak → pemeriksaan diganti yang baru
       const prods = await tx.select({ id: products.id, name: products.name }).from(products).where(inArray(products.id, rows.map((o) => o.productId)));
       const name = (pid: string) => prods.find((p) => p.id === pid)?.name ?? 'Produk';
       const checks = new Map((input.items ?? []).map((i) => [i.productId, i]));
@@ -275,27 +288,15 @@ export class OrdersService {
       });
       const bad = lines.filter((l) => l.got < l.o.qty || l.issue);
       const status = bad.length ? 'open' : 'ok';
-      const [r] = await tx.insert(orderReports).values({ tenantId: a.tid, groupId: head.groupId, groupNo: head.groupNo, depotId: head.depotId, memberId, status, note: input.note || null }).returning();
+      const [r] = await tx.insert(orderReports).values({ tenantId: a.tid, groupId: head.groupId, groupNo: head.groupNo, depotId: head.depotId, memberId, status, note: input.note || null, verifyStatus: 'pending' }).returning();
       if (bad.length) await this.core.notifyDepotStaff(tx, { tenantId: a.tid, depotId: head.depotId, tab: 'trx', cat: 'Laporan', title: 'Anggota melaporkan masalah barang', body: `#${head.groupNo}: ${bad.length} produk bermasalah. Periksa dan tanggapi.`, route: 'staff-orders', refId: 'report' });
-      // Pemeriksaan anggota sekaligus konfirmasi barang sudah diterima: petugas tidak perlu mengonfirmasi lagi.
-      let autoReceived = false;
-      if (rows.some((o) => !o.received)) {
-        const [mem] = await tx.select({ name: members.name }).from(members).where(eq(members.id, memberId));
-        await this.setAll(tx, rows, { received: true, receivedAt: new Date(), proofRef: `CEK-${head.groupNo}`, receiverName: mem?.name ?? 'Anggota' }, true);
-        autoReceived = true;
-        const earned = await this.creditReward(tx, rows);
-        if (earned) await this.core.audit(tx, a, `${head.groupNo}: saldo penarikan anggota bertambah Rp${earned.toLocaleString('id-ID')} (${REWARD_PERCENT}%)`);
-        const coins = await this.creditCoins(tx, rows);
-        if (coins) await this.core.audit(tx, a, `${head.groupNo}: koin anggota bertambah ${coins}`);
-        const inst = await this.chargeInstallment(tx, rows);
-        if (inst) await this.core.audit(tx, a, `${head.groupNo}: tagihan harian ${inst.seq ? `ke-${inst.seq}` : '(tunggakan)'} dipotong Rp${inst.paid.toLocaleString('id-ID')} dari saldo penarikan${inst.arrears ? `; tunggakan Rp${inst.arrears.toLocaleString('id-ID')}` : ''}`);
-      }
       await tx.insert(orderReportLines).values(lines.map((l) => ({ reportId: r!.id, productId: l.o.productId, qtyOrdered: l.o.qty, qtyReceived: l.got, issue: l.issue, note: l.note })));
       await this.core.audit(tx, a, bad.length
         ? `${head.groupNo}: anggota melaporkan barang TIDAK SESUAI: ${bad.map((l) => `${name(l.o.productId)} ${l.got}/${l.o.qty} (${SHIPMENT_ISSUES[(l.issue ?? 'kurang') as keyof typeof SHIPMENT_ISSUES]}${l.note ? `: ${l.note}` : ''})`).join('; ')}`
         : `${head.groupNo}: anggota memeriksa barang, semua sesuai`);
-      if (autoReceived) await this.core.audit(tx, a, `Penerimaan ${head.groupNo} terkonfirmasi otomatis dari pemeriksaan anggota`);
-      return { id: r!.id, status };
+      await tx.insert(orderReportPhotos).values({ reportId: r!.id, data: input.photo });
+      await this.core.notifyDepotStaff(tx, { tenantId: a.tid, depotId: head.depotId, tab: 'trx', cat: 'Laporan', title: 'Foto penerimaan menunggu verifikasi', body: `#${head.groupNo}: anggota mengirim foto barang yang diterima${bad.length ? ` dan melaporkan ${bad.length} produk bermasalah` : ''}. Periksa lalu validasi.`, route: 'staff-orders', refId: head.groupId });
+      return { id: r!.id, status, verifyStatus: 'pending' };
     });
   }
 
@@ -310,7 +311,7 @@ export class OrdersService {
       this.db.select({ l: orderReportLines, name: products.name, sku: products.sku }).from(orderReportLines).innerJoin(products, eq(products.id, orderReportLines.productId)).where(eq(orderReportLines.reportId, r.id)),
       this.db.select({ name: members.name }).from(members).where(eq(members.id, r.memberId)),
     ]);
-    return { id: r.id, groupNo: r.groupNo, status: r.status, note: r.note, memberName: m?.name ?? '—', createdAt: r.createdAt, resolution: r.resolution, resolvedByName: r.resolvedByName, resolvedAt: r.resolvedAt,
+    return { id: r.id, groupNo: r.groupNo, status: r.status, note: r.note, memberName: m?.name ?? '—', createdAt: r.createdAt, resolution: r.resolution, resolvedByName: r.resolvedByName, resolvedAt: r.resolvedAt, verifyStatus: r.verifyStatus, verifyNote: r.verifyNote, verifiedByName: r.verifiedByName, verifiedAt: r.verifiedAt,
       lines: ls.map(({ l, name, sku }) => ({ productId: l.productId, name, sku, qtyOrdered: l.qtyOrdered, qtyReceived: l.qtyReceived, issue: l.issue, note: l.note })) };
   }
 
@@ -330,7 +331,7 @@ export class OrdersService {
   /** Penerimaan kas pelanggan umum (bukan untuk pesanan yang sudah dibayar saldo): dicatat petugas toko saat uang diterima, atau pengurus. */
   async payWithCash(a: Actor, id: string) {
     return this.db.transaction(async (tx) => {
-      const rows = await this.lockGroup(tx, a, id);
+      const rows = await this.lockGroup(tx, a, id, true);
       this.needApproved(rows);
       if (rows.some((o) => o.pay !== 'unpaid')) throw new BusinessError('Pesanan sudah dibayar; jangan catat kas lagi.');
       const [t] = await tx.select().from(tenants).where(eq(tenants.id, a.tid)).for('update');
@@ -343,7 +344,7 @@ export class OrdersService {
 
   async ship(a: Actor, id: string, deliveryRef: string) {
     return this.db.transaction(async (tx) => {
-      const rows = await this.lockGroup(tx, a, id);
+      const rows = await this.lockGroup(tx, a, id, true);
       if (rows.some((o) => o.pay === 'unpaid')) throw new BusinessError('Pesanan harus dibayar penuh sebelum dikirim.');
       if (rows.some((o) => o.shipped)) throw new BusinessError('Pesanan sudah dikirim.');
       for (const o of rows) {
@@ -351,7 +352,7 @@ export class OrdersService {
         if (o.qty > st.physical) throw new BusinessError('Stok fisik tidak cukup.');
         await this.core.moveStock(tx, a, { depotId: o.depotId, productId: o.productId, delta: -o.qty, type: 'shipment', refNo: o.no, note: 'Pengiriman pesanan' });
       }
-      await this.setAll(tx, rows, { shipped: true, deliveryRef });
+      await this.setAll(tx, rows, { shipped: true, deliveryRef, shippedAt: new Date() });
       await this.core.audit(tx, a, `${rows[0]!.groupNo} dikirim (${deliveryRef}); fisik dan reservasi berkurang`);
       return { ok: true };
     });
@@ -359,17 +360,76 @@ export class OrdersService {
 
   async receive(a: Actor, id: string, proofRef: string, receiverName: string) {
     return this.db.transaction(async (tx) => {
-      const rows = await this.lockGroup(tx, a, id);
+      const rows = await this.lockGroup(tx, a, id, true);
       if (rows.some((o) => !o.shipped)) throw new BusinessError('Pesanan belum dikirim.');
+      // Pesanan anggota selesai hanya lewat pemeriksaan anggota (submitCheck), supaya imbalan tidak cair tanpa anggota memeriksa barangnya.
+      if (rows[0]!.buyerId) throw new BusinessError('Pesanan anggota selesai setelah anggota mengirim foto barang yang diterima dan petugas toko memverifikasinya; konfirmasi penerimaan langsung tidak tersedia.');
       if (rows.some((o) => o.received)) throw new BusinessError('Penerimaan sudah dikonfirmasi.');
-      await this.setAll(tx, rows, { received: true, receivedAt: new Date(), proofRef, receiverName });
-      await this.core.audit(tx, a, `Penerimaan ${rows[0]!.groupNo} dikonfirmasi: ${receiverName}`);
-      const earned = await this.creditReward(tx, rows);
-      if (earned) await this.core.audit(tx, a, `${rows[0]!.groupNo}: saldo penarikan anggota bertambah Rp${earned.toLocaleString('id-ID')} (${REWARD_PERCENT}%)`);
-      const coins = await this.creditCoins(tx, rows);
-      if (coins) await this.core.audit(tx, a, `${rows[0]!.groupNo}: koin anggota bertambah ${coins}`);
-      const inst = await this.chargeInstallment(tx, rows);
-      if (inst) await this.core.audit(tx, a, `${rows[0]!.groupNo}: tagihan harian ${inst.seq ? `ke-${inst.seq}` : '(tunggakan)'} dipotong Rp${inst.paid.toLocaleString('id-ID')} dari saldo penarikan${inst.arrears ? `; tunggakan Rp${inst.arrears.toLocaleString('id-ID')}` : ''}`);
+      await this.completeReceipt(tx, a, rows, proofRef, receiverName, `Penerimaan ${rows[0]!.groupNo} dikonfirmasi: ${receiverName}`);
+      return { ok: true };
+    });
+  }
+
+  /** Tandai diterima, lalu kreditkan imbalan, koin, dan potong tagihan harian (dipakai konfirmasi petugas dan penyelesaian pengurus). */
+  private async completeReceipt(tx: Database, a: Actor, rows: Order[], proofRef: string, receiverName: string, auditMessage: string) {
+    await this.setAll(tx, rows, { received: true, receivedAt: new Date(), proofRef, receiverName });
+    await this.core.audit(tx, a, auditMessage);
+    const earned = await this.creditReward(tx, rows);
+    if (earned) await this.core.audit(tx, a, `${rows[0]!.groupNo}: saldo penarikan anggota bertambah Rp${earned.toLocaleString('id-ID')}`);
+    const coins = await this.creditCoins(tx, rows);
+    if (coins) await this.core.audit(tx, a, `${rows[0]!.groupNo}: koin anggota bertambah ${coins}`);
+    const inst = await this.chargeInstallment(tx, rows);
+    if (inst) await this.core.audit(tx, a, `${rows[0]!.groupNo}: tagihan harian ${inst.seq ? `ke-${inst.seq}` : '(tunggakan)'} dipotong Rp${inst.paid.toLocaleString('id-ID')} dari saldo penarikan${inst.arrears ? `; tunggakan Rp${inst.arrears.toLocaleString('id-ID')}` : ''}`);
+  }
+
+  /** Petugas toko memeriksa foto penerimaan dari anggota: valid → petugas menyelesaikan pesanan (imbalan cair); tidak valid → anggota diminta kirim ulang. */
+  async verifyReceipt(a: Actor, id: string, input: z.infer<typeof verifyReceiptSchema>) {
+    return this.db.transaction(async (tx) => {
+      const rows = await this.lockGroup(tx, a, id, true);
+      const head = rows[0]!;
+      if (rows.some((o) => o.received)) throw new BusinessError('Pesanan ini sudah selesai.');
+      const [r] = await tx.select().from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.groupId, head.groupId))).orderBy(desc(orderReports.createdAt)).limit(1).for('update');
+      if (!r || r.verifyStatus !== 'pending') throw new BusinessError('Tidak ada foto penerimaan anggota yang menunggu verifikasi.');
+      const [mem] = await tx.select({ name: members.name }).from(members).where(eq(members.id, r.memberId));
+      if (input.valid) {
+        await tx.update(orderReports).set({ verifyStatus: 'valid', verifiedByName: a.name, verifiedAt: new Date() }).where(eq(orderReports.id, r.id));
+        await this.completeReceipt(tx, a, rows, `CEK-${head.groupNo}`, mem?.name ?? 'Anggota', `Penerimaan ${head.groupNo} diverifikasi valid oleh petugas ${a.name} (foto anggota); pesanan diselesaikan`);
+      } else {
+        await tx.update(orderReports).set({ verifyStatus: 'invalid', verifyNote: input.note!, verifiedByName: a.name, verifiedAt: new Date() }).where(eq(orderReports.id, r.id));
+        await this.core.notify(tx, { tenantId: a.tid, memberId: r.memberId, tab: 'trx', cat: 'Laporan', title: 'Foto penerimaan ditolak', body: `#${head.groupNo}: ${input.note}. Kirim ulang foto barang yang diterima.`, route: 'orders', refId: head.groupId });
+        await this.core.audit(tx, a, `Foto penerimaan ${head.groupNo} dinyatakan TIDAK VALID oleh petugas ${a.name}: ${input.note}`);
+      }
+      return { ok: true };
+    });
+  }
+
+  /** Foto penerimaan terbaru satu pesanan (untuk petugas toko). */
+  async receiptPhoto(a: Actor, id: string) {
+    const [head] = await this.db.select().from(orders).where(and(eq(orders.tenantId, a.tid), eq(orders.id, id)));
+    if (!head) throw new BusinessError('Pesanan tidak ditemukan');
+    this.core.assertDepot(a, head.depotId);
+    const [r] = await this.db.select({ photo: orderReportPhotos.data }).from(orderReports).innerJoin(orderReportPhotos, eq(orderReportPhotos.reportId, orderReports.id))
+      .where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.groupId, head.groupId))).orderBy(desc(orderReports.createdAt)).limit(1);
+    return { photo: r?.photo ?? null };
+  }
+
+  /**
+   * Pengecualian untuk pesanan anggota yang tak kunjung diperiksa anggotanya: pengurus (bukan petugas) menyelesaikannya dengan alasan tertulis,
+   * hanya setelah anggota diberi waktu MEMBER_CHECK_GRACE_DAYS hari sejak dikirim. Dicatat di audit; imbalan cair seperti biasa.
+   */
+  async receiveOverride(a: Actor, id: string, input: z.infer<typeof receiveOverrideSchema>) {
+    return this.db.transaction(async (tx) => {
+      const rows = await this.lockGroup(tx, a, id, true);
+      const head = rows[0]!;
+      if (!head.buyerId) throw new BusinessError('Hanya untuk pesanan anggota. Pesanan pelanggan umum dikonfirmasi lewat "Konfirmasi diterima".');
+      if (rows.some((o) => !o.shipped)) throw new BusinessError('Pesanan belum dikirim.');
+      if (rows.some((o) => o.received)) throw new BusinessError('Pesanan ini sudah selesai (anggota sudah memeriksa atau sudah dikonfirmasi).');
+      const [pending] = await tx.select({ id: orderReports.id }).from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.groupId, head.groupId), eq(orderReports.verifyStatus, 'pending'))).limit(1);
+      if (pending) throw new BusinessError('Anggota sudah mengirim foto penerimaan; petugas toko yang memverifikasi dan menyelesaikannya.');
+      const since = head.shippedAt ?? head.createdAt;
+      const days = Math.floor((Date.now() - since.getTime()) / 86_400_000);
+      if (days < MEMBER_CHECK_GRACE_DAYS) throw new BusinessError(`Beri anggota waktu memeriksa barangnya dulu: pesanan baru dikirim ${days} hari lalu. Pengurus baru dapat menyelesaikannya setelah ${MEMBER_CHECK_GRACE_DAYS} hari.`);
+      await this.completeReceipt(tx, a, rows, `PENGURUS-${head.groupNo}`, a.name, `Pesanan anggota ${head.groupNo} diselesaikan pengurus tanpa pemeriksaan anggota (${days} hari sejak dikirim): ${input.reason}`);
       return { ok: true };
     });
   }
@@ -430,6 +490,9 @@ class OrdersController {
   @Post(':id/pay-cash') @Roles(...OPS) cash(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string) { return this.svc.payWithCash(a, id); }
   @Post(':id/ship') @Roles(...OPS) ship(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(shipSchema)) b: any) { return this.svc.ship(a, id, b.deliveryRef); }
   @Post(':id/receive') @Roles(...OPS) receive(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(receiveOrderSchema)) b: any) { return this.svc.receive(a, id, b.proofRef, b.receiverName); }
+  @Post(':id/verify-receipt') @Roles(...DEPOT_ONLY) verifyReceipt(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(verifyReceiptSchema)) b: z.infer<typeof verifyReceiptSchema>) { return this.svc.verifyReceipt(a, id, b); }
+  @Get(':id/receipt-photo') @Roles(...STAFF) receiptPhoto(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string) { return this.svc.receiptPhoto(a, id); }
+  @Post(':id/receive-override') @Roles(...ADMIN) receiveOverride(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(receiveOverrideSchema)) b: z.infer<typeof receiveOverrideSchema>) { return this.svc.receiveOverride(a, id, b); }
   @Get(':id/report') reportOf(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string) { return this.svc.reportOf(a, id); }
   @Post(':id/report/resolve') @Roles(...OPS) resolveReport(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(resolveReportSchema)) b: z.infer<typeof resolveReportSchema>) { return this.svc.resolveReport(a, id, b); }
   @Post(':id/cancel') @Roles(...OPS) cancel(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(cancelSchema)) b: any) { return this.svc.cancel(a, id, b.reason); }

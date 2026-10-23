@@ -10,7 +10,6 @@ import { gpsBlocked, kmText, useDepotKm } from '../../src/depotKm';
 import { GpsGate } from '../../src/GpsGate';
 import { rupiah, useData } from '../../src/hooks';
 import { C } from '../../src/theme';
-import { REWARD_PERCENT } from '@sajadah/shared';
 import { BackBar } from '../../src/shop';
 import { useShop, type Shop, type ShopDepot, type ShopProduct } from '../../src/shopData';
 
@@ -97,6 +96,7 @@ export default function Checkout() {
   const lines = useMemo<Line[]>(() => (shop.data?.products ?? []).filter((p) => cart.qtyOf(p.id) > 0).map((p) => ({ p, qty: cart.qtyOf(p.id) })), [shop.data, cart]);
   const total = lines.reduce((n, l) => n + l.p.price * l.qty, 0);
   const coins = lines.reduce((n, l) => n + l.p.coins * l.qty, 0);
+  const reward = lines.reduce((n, l) => n + Math.floor((l.p.price * l.qty * l.p.rewardPercent) / 100), 0);
   const { depots, nearest, depotId, setPicked } = useDepotPick(shop.data, lines, km, hasGps);
   const submit = useSubmit(depotId, lines);
   const router = useRouter();
@@ -114,7 +114,7 @@ export default function Checkout() {
               <Text style={{ color: C.ink, fontWeight: '600' }}>{rupiah(l.p.price * l.qty)}</Text>
             </View>
           ))}
-          <Text style={{ color: C.green, fontSize: 12 }}>Anda akan mendapat {rupiah(Math.floor((total * REWARD_PERCENT) / 100))} ({REWARD_PERCENT}%) ke saldo penarikan setelah barang diterima. Sekali per hari, Rp30.000 dipotong dari saldo penarikan untuk tagihan harian.{coins > 0 ? ` Plus ${coins} koin.` : ''}</Text>
+          <Text style={{ color: C.green, fontSize: 12 }}>Anda akan mendapat {rupiah(reward)} ke saldo penarikan setelah barang diterima (sesuai imbalan tiap produk). Bila imbalan Anda hari ini mencapai Rp30.000, tagihan harian Rp30.000 dipotong otomatis dari saldo penarikan.{coins > 0 ? ` Plus ${coins} koin.` : ''}</Text>
           <View style={[s.sum, { borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10 }]}>
             <Text style={{ flex: 1, fontWeight: '700', color: C.ink }}>Total</Text>
             <Text style={{ fontWeight: '700', fontSize: 18, color: C.ink }}>{rupiah(total)}</Text>

@@ -1,6 +1,6 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, as, boot, undoOrder } from './helpers';
+import { Client, as, boot, undoOrder, PHOTO, receiveViaMember } from './helpers';
 import { DB } from '../src/core/db.module';
 import type { Database } from '../src/db/db';
 import { members as membersTable, orders as ordersTable, tenants as tenantsTable } from '../src/db/schema';
@@ -662,7 +662,9 @@ describe('aturan komisi: hanya penjualan ke pelanggan umum', () => {
   const lines = async (no: string) => (await acct.get('/orders/commissions')).body.filter((l: any) => l.orderNo === no);
   const finish = async (o: any) => {
     expect((await staff.post(`/orders/${o.id}/ship`, { deliveryRef: 'SJ-R' })).status).toBe(201);
-    expect((await staff.post(`/orders/${o.id}/receive`, { proofRef: 'BKT-R', receiverName: 'Uji' })).status).toBe(201);
+    // pesanan anggota selesai lewat pemeriksaan anggota (member = Siti); pesanan pelanggan umum dikonfirmasi petugas
+    const done = o.buyerId ? await receiveViaMember(member, staff, o.id) : await staff.post(`/orders/${o.id}/receive`, { proofRef: 'BKT-R', receiverName: 'Uji' });
+    expect(done.status).toBe(201);
     return o;
   };
   /** Penjualan anggota ke pelanggan umum sampai diterima (dibayar tunai). */

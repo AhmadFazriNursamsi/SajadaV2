@@ -8,9 +8,11 @@ import { OrderDetail } from '../../src/OrderDetail';
 import { STATUS, type OrderGroup } from '../../src/orderMeta';
 import { PickerSheet } from '../../src/PickerSheet';
 import { StaffOrderActions } from '../../src/StaffOrderActions';
+import { OpnameNotice } from '../../src/StaffParts';
 import { C } from '../../src/theme';
+import { guardGroup } from '../../src/roleRoute';
 
-const STATUS_OPTIONS = [{ v: 'all', l: 'Semua Status' }, { v: 'report', l: 'Ada laporan anggota' }, ...Object.entries(STATUS).filter(([k]) => k !== 'returned').map(([k, [l]]) => ({ v: k, l }))];
+const STATUS_OPTIONS = [{ v: 'all', l: 'Semua Status' }, { v: 'verify', l: 'Foto menunggu verifikasi' }, { v: 'report', l: 'Ada laporan anggota' }, ...Object.entries(STATUS).filter(([k]) => k !== 'returned').map(([k, [l]]) => ({ v: k, l }))];
 const DATE_OPTIONS = [{ v: 'all', l: 'Semua Tanggal' }, { v: '7', l: '7 hari terakhir' }, { v: '30', l: '30 hari terakhir' }, { v: '90', l: '90 hari terakhir' }];
 const labelOf = (opts: { v: string; l: string }[], v: string) => opts.find((o) => o.v === v)?.l ?? '';
 type Thumb = { name: string; imageUrl: string | null };
@@ -35,7 +37,7 @@ function groupOrders(rows: any[], name: (id: string) => string): Row[] {
 }
 
 function matches(o: Row, f: { status: string; days: string; q: string }) {
-  if (f.status === 'report' ? o.raw.report?.status !== 'open' : f.status !== 'all' && o.status !== f.status) return false;
+  if (f.status === 'verify' ? o.raw.report?.verifyStatus !== 'pending' : f.status === 'report' ? o.raw.report?.status !== 'open' : f.status !== 'all' && o.status !== f.status) return false;
   if (f.days !== 'all' && Date.now() - new Date(o.createdAt).getTime() > Number(f.days) * 86_400_000) return false;
   const q = f.q.trim().toLowerCase();
   return !q || o.no.toLowerCase().includes(q) || o.party.toLowerCase().includes(q) || o.lines.some((l) => l.product.toLowerCase().includes(q));
@@ -47,12 +49,15 @@ function detailOf(o: Row) {
 }
 
 /** Daftar pesanan toko bergaya "Daftar Transaksi": cari, saring status/tanggal, kartu bergambar produk; tindakan petugas ada di dalam kartu. */
-export default function Orders() {
-  const params = useLocalSearchParams<{ status?: string }>();
+function Orders() {
+  const params = useLocalSearchParams<{ status?: string; open?: string }>();
   const q = useData<any[]>('/orders');
   const prods = useData<any[]>('/products');
   const { refetch } = q;
-  useFocusEffect(useCallback(() => { void refetch(); }, [refetch]));
+  // Pesanan yang tadinya cocok dengan filter status tetap tampil setelah statusnya berubah (mis. baru disetujui),
+  // supaya petugas tidak perlu mengganti filter untuk melihatnya. Dikosongkan saat filter diganti atau layar dibuka lagi.
+  const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
+  useFocusEffect(useCallback(() => { void refetch(); setKept(new Set()); }, [refetch]));
   const [status, setStatus] = useState(params.status ?? 'all');
   const [days, setDays] = useState('all');
   const [text, setText] = useState('');
@@ -60,15 +65,20 @@ export default function Orders() {
   const [sheet, setSheet] = useState<'status' | 'date' | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // Layar tab tetap terpasang: ikuti status baru dari kartu tugas di Beranda.
-  useEffect(() => { setStatus(params.status ?? 'all'); }, [params.status]);
+  useEffect(() => { setStatus(params.status ?? 'all'); if (params.open) setOpenId(params.open); }, [params.status, params.open]);
 
   const thumbs = useMemo(() => new Map<string, Thumb>((prods.data ?? []).map((p) => [p.id, { name: p.name, imageUrl: p.image ? `/api/products/image/${p.image}` : null }])), [prods.data]);
   const all = useMemo(() => groupOrders(q.data ?? [], (id) => thumbs.get(id)?.name ?? 'Produk'), [q.data, thumbs]);
+  useEffect(() => { setKept(new Set()); }, [status, days, text]);
+  useEffect(() => {
+    const ids = all.filter((o) => matches(o, { status, days, q: text })).map((o) => o.groupId);
+    if (ids.some((id) => !kept.has(id))) setKept((prev) => new Set([...prev, ...ids]));
+  }, [all, status, days, text, kept]);
   // Pesanan yang perlu disetujui tampil paling atas.
   const list = useMemo(() => {
-    const f = all.filter((o) => matches(o, { status, days, q: text }));
+    const f = all.filter((o) => matches(o, { status, days, q: text }) || (kept.has(o.groupId) && matches(o, { status: 'all', days, q: text })));
     return [...f.filter((o) => o.status === 'awaiting_approval'), ...f.filter((o) => o.status !== 'awaiting_approval')];
-  }, [all, status, days, text]);
+  }, [all, status, days, text, kept]);
   const renderItem = useCallback(({ item }: { item: Row }) => (
     <OrderCard o={item} products={thumbs} title={item.label} party={item.party} open={openId === item.groupId} onToggle={() => setOpenId(openId === item.groupId ? null : item.groupId)}>
       <OrderDetail o={detailOf(item)} hideContents />
@@ -78,6 +88,7 @@ export default function Orders() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <Header title="Pesanan Toko" placeholder="Cari nomor, nama, atau produk" searching={searching} q={text} onQ={setText} onToggle={() => { setSearching((v) => !v); setText(''); }} />
+      <OpnameNotice />
       <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: C.line }}>
         <Pill label={labelOf(STATUS_OPTIONS, status)} active={status !== 'all'} onPress={() => setSheet('status')} />
         <Pill label={labelOf(DATE_OPTIONS, days)} active={days !== 'all'} onPress={() => setSheet('date')} />
@@ -90,3 +101,5 @@ export default function Orders() {
     </View>
   );
 }
+
+export default guardGroup('staff', 'orders', Orders);

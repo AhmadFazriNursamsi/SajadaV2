@@ -26,6 +26,7 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      ["expo-image-picker", { "photosPermission": "Sajadah memakai foto Anda untuk bukti barang yang diterima dan foto profil.", "cameraPermission": "Sajadah memakai kamera untuk memotret barang yang Anda terima sebagai bukti penerimaan." }],
       [
         "expo-location",
         {

@@ -21,18 +21,19 @@ export function ProductImage({ p, size, radius = 10 }: { p: Pick<ShopProduct, 'n
   );
 }
 
-/** Harga tebal, harga normal dicoret, dan lencana persen diskon (seperti Klik Indomaret). */
+/** Harga tetap (tebal), lalu lencana nominal saldo penarikan dan koin. */
 export function PriceBlock({ p, big }: { p: ShopProduct; big?: boolean }) {
+  const reward = Math.floor((p.price * p.rewardPercent) / 100);
   return (
-    <View style={{ gap: 4 }}>
-      <Text style={{ color: C.ink, fontWeight: '700', fontSize: big ? 24 : 15 }}>{rupiah(p.price)}</Text>
-      {p.coins > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><CoinIcon size={14} /><Text style={s.coin}>+{p.coins} koin</Text></View>}
-      {p.discountPct > 0 && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={s.badge}>{p.discountPct}%</Text>
-          <Text style={{ color: C.muted, textDecorationLine: 'line-through', fontSize: big ? 15 : 12 }}>{rupiah(p.listPrice)}</Text>
+    <View style={{ gap: big ? 8 : 5 }}>
+      <Text style={{ color: C.ink, fontWeight: '700', fontSize: big ? 26 : 16 }}>{rupiah(p.price)}</Text>
+      {reward > 0 && (
+        <View style={[s.chip, { backgroundColor: C.ok[0] }]}>
+          <Ionicons name="wallet-outline" size={big ? 15 : 13} color={C.green} />
+          <Text style={[s.chipText, { color: C.green, fontSize: big ? 13 : 11 }]}>+{rupiah(reward)}</Text>
         </View>
       )}
+      {p.coins > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><CoinIcon size={14} /><Text style={s.coin}>+{p.coins} koin</Text></View>}
     </View>
   );
 }
@@ -95,7 +96,8 @@ export function CartIcon({ onPress }: { onPress: () => void }) {
 const s = StyleSheet.create({
   card: { flex: 1, backgroundColor: C.panel, borderRadius: 12, borderWidth: 1, borderColor: C.line, padding: 10, gap: 6 },
   coin: { color: C.goldInk, fontSize: 12, fontWeight: '600' },
-  badge: { backgroundColor: C.bad[0], color: C.bad[1], fontWeight: '700', fontSize: 12, borderRadius: 4, overflow: 'hidden', paddingHorizontal: 5, paddingVertical: 1 },
+  chip: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 4, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
+  chipText: { fontWeight: '700' },
   add: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: C.green, borderRadius: 8, paddingVertical: 8, marginTop: 2 },
   soldOut: { textAlign: 'center', color: C.muted, backgroundColor: C.neutral[0], borderRadius: 8, paddingVertical: 8, fontSize: 13, overflow: 'hidden' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },

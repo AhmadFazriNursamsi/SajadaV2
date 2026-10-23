@@ -75,7 +75,7 @@ export class MeService {
         buyerName: o.buyerId === m.id ? null : (buyerName ?? o.customerName), customerOrder: !o.buyerId,
         canPay: o.sellerId === m.id && orderStatus(o) === 'awaiting_payment',
         report: reports.get(o.groupId) ?? null,
-        canCheck: o.sellerId === m.id && o.shipped && !o.cancelled && !o.returned && !reports.has(o.groupId),
+        canCheck: o.sellerId === m.id && o.shipped && !o.cancelled && !o.returned && !o.received && (!reports.has(o.groupId) || reports.get(o.groupId)!.verifyStatus === 'invalid'),
         selfOrder: isSelfOrder(o), commissionEligible: commissionEligible(o),
       })),
     };
@@ -134,8 +134,7 @@ export class MeService {
     }));
     const items = ps.map((p) => {
       const stock = Object.fromEntries(stocks.map((s) => [s.depot.id, s.avail(p.id)]));
-      const discount = p.listPrice > p.sellPrice ? Math.round((1 - p.sellPrice / p.listPrice) * 100) : 0;
-      return { id: p.id, sku: p.sku, name: p.name, price: p.sellPrice, listPrice: discount ? p.listPrice : 0, discountPct: discount, category: p.category, description: p.description, coins: p.coins, imageUrl: p.image ? `/api/products/image/${p.image}` : null, stock, available: Object.values(stock).reduce((x, y) => x + y, 0) };
+      return { id: p.id, sku: p.sku, name: p.name, price: p.sellPrice, category: p.category, description: p.description, coins: p.coins, rewardPercent: p.rewardPercent, imageUrl: p.image ? `/api/products/image/${p.image}` : null, stock, available: Object.values(stock).reduce((x, y) => x + y, 0) };
     });
     return {
       categories: [...new Set(items.map((i) => i.category).filter((c): c is string => !!c))].sort(),

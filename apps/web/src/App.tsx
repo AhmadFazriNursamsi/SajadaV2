@@ -74,6 +74,18 @@ function useSidebar() {
   return [open, setOpen] as const;
 }
 
+
+type DepotTasks = { actions: { awaitingApproval: number; paidNotShipped: number; memberReports: number }; opname?: { state: 'ok' | 'due' | 'locked'; month: string; dueDate: string | null; daysLeft: number | null } | null; opnameLocked?: { name: string; month: string }[] };
+
+/** Kewajiban stok opname bulanan: petugas diperingatkan mendekati akhir bulan dan diberi tahu bila tokonya dikunci; pengurus melihat toko yang dikunci. */
+function OpnameBanner({ t }: { t?: DepotTasks }) {
+  const o = t?.opname;
+  if (o?.state === 'locked') return <div className="optice bad" role="alert"><b>Transaksi toko dikunci.</b> Stok opname bulan {o.month} belum diajukan. Pesanan, pembayaran, pengiriman, dan stok masuk baru bisa dilanjutkan setelah opname diajukan. <NavLink to="/opname">Buka Stok opname →</NavLink></div>;
+  if (o?.state === 'due') return <div className="optice warn" role="status"><b>Stok opname bulan {o.month} jatuh tempo {o.dueDate}</b> ({o.daysLeft} hari lagi). Bila terlewat, transaksi toko dikunci. <NavLink to="/opname">Buka Stok opname →</NavLink></div>;
+  if (t?.opnameLocked?.length) return <div className="optice bad" role="alert"><b>Toko dikunci karena stok opname terlewat:</b> {t.opnameLocked.map((d) => `${d.name} (${d.month})`).join(', ')}. Petugas tokonya perlu mengajukan opname.</div>;
+  return null;
+}
+
 function Shell() {
   const { me, logout } = useSession();
   const [open, setOpen] = useSidebar();
@@ -84,7 +96,7 @@ function Shell() {
   const staff = me!.role === 'tenant_admin'; // lencana menu memakai ringkasan pengurus
   const ov = useData<Overview>('/overview', staff);
   // Petugas: angka pekerjaan toko untuk lencana menu Pesanan; diperbarui berkala agar pesanan baru anggota langsung terlihat.
-  const tasks = useQuery({ queryKey: ['/overview/depot-tasks'], queryFn: () => get<{ actions: { awaitingApproval: number; paidNotShipped: number; memberReports: number } }>('/overview/depot-tasks'), enabled: me!.role === 'staff', refetchInterval: 20_000 });
+  const tasks = useQuery({ queryKey: ['/overview/depot-tasks'], queryFn: () => get<DepotTasks>('/overview/depot-tasks'), enabled: me!.role !== 'member', refetchInterval: 20_000 });
   const routes = ROUTES.filter((r) => r.roles.includes(me!.role) && (MLM_ENABLED || !r.mlm));
   return (
     <div className="app">
@@ -120,6 +132,7 @@ function Shell() {
         </div>
       </aside>
       <main className={`main ${open ? '' : 'sidebar-closed'}`}>
+        <OpnameBanner t={tasks.data} />
         <Routes>
           {routes.map((r) => <Route key={r.path} path={r.path} element={r.el} />)}
           <Route path="/pengadaan" element={<Navigate to="/persediaan" replace />} />

@@ -1,6 +1,6 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, as, boot } from './helpers';
+import { Client, as, boot, PHOTO, receiveViaMember } from './helpers';
 import { PushService } from '../src/notifications/notifications.module';
 
 let app: NestFastifyApplication;
@@ -42,9 +42,10 @@ describe('Notifikasi anggota', () => {
     const id = placed.body[0].id, groupId = placed.body[0].groupId;
     await staff.post(`/orders/${id}/approve`);
     await staff.post(`/orders/${id}/ship`, { deliveryRef: 'SJ-NOTIF' });
-    await staff.post(`/orders/${id}/receive`, { proofRef: 'BUKTI-N', receiverName: 'Siti' });
+    await receiveViaMember(member, staff, id);
     const n = await inbox();
     const titles = n.items.map((x: any) => x.title);
+    // Pesanan selesai setelah petugas memverifikasi foto anggota, sehingga anggota diberi tahu.
     expect(titles).toEqual(expect.arrayContaining(['Pesanan disetujui', 'Pesanan dalam pengiriman', 'Pesanan selesai', 'Saldo penarikan bertambah']));
     const done = n.items.find((x: any) => x.title === 'Pesanan selesai');
     expect(done).toMatchObject({ tab: 'trx', cat: 'Selesai', route: 'orders', refId: groupId, read: false });

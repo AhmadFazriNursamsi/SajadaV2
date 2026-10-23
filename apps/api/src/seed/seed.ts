@@ -32,9 +32,9 @@ const TENANTS: { slug: string; name: string; depotName: string; depot2: string; 
 ];
 
 const PRODUCTS = [
-  { sku: 'PRD-01', name: 'Produk A', physical: 20, safety: 5, target: 20, inTransit: 0, buyPrice: 70_000, sellPrice: 100_000, listPrice: 125_000, category: 'Makanan', coins: 10, description: 'Produk pilihan koperasi dalam kemasan, dikemas higienis dan siap dijual kembali. Simpan di tempat sejuk dan kering.' },
-  { sku: 'PRD-02', name: 'Produk B', physical: 9, safety: 5, target: 20, inTransit: 0, buyPrice: 63_000, sellPrice: 90_000, listPrice: 0, category: 'Minuman', coins: 8, description: 'Minuman kemasan untuk kebutuhan harian keluarga dan warung. Kualitas terjaga langsung dari pemasok koperasi.' },
-  { sku: 'PRD-03', name: 'Produk C', physical: 14, safety: 6, target: 24, inTransit: 0, buyPrice: 80_000, sellPrice: 115_000, listPrice: 0, category: 'Kebutuhan Rumah', coins: 12, description: 'Kebutuhan rumah tangga sehari-hari dalam kemasan, harga anggota lebih hemat dibanding eceran.' },
+  { sku: 'PRD-01', name: 'Produk A', physical: 20, safety: 5, target: 20, inTransit: 0, buyPrice: 70_000, sellPrice: 100_000, category: 'Makanan', coins: 10, description: 'Produk pilihan koperasi dalam kemasan, dikemas higienis dan siap dijual kembali. Simpan di tempat sejuk dan kering.' },
+  { sku: 'PRD-02', name: 'Produk B', physical: 9, safety: 5, target: 20, inTransit: 0, buyPrice: 63_000, sellPrice: 90_000, category: 'Minuman', coins: 8, description: 'Minuman kemasan untuk kebutuhan harian keluarga dan warung. Kualitas terjaga langsung dari pemasok koperasi.' },
+  { sku: 'PRD-03', name: 'Produk C', physical: 14, safety: 6, target: 24, inTransit: 0, buyPrice: 80_000, sellPrice: 115_000, category: 'Kebutuhan Rumah', coins: 12, description: 'Kebutuhan rumah tangga sehari-hari dalam kemasan, harga anggota lebih hemat dibanding eceran.' },
 ];
 
 /** Bangun pohon wilayah tenant dan kembalikan id kelurahan (satu per kecamatan) + kode untuk nomor anggota. */

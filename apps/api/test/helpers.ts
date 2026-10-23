@@ -64,3 +64,12 @@ export async function undoOrder(app: NestFastifyApplication, orderId: string) {
     await db.update(orders).set({ returned: true, returnedAt: new Date(), returnReason: 'bersih uji', ...(eligible ? { commission: 'reversed' as const, commissionReversedFrom: o.commission } : {}) }).where(eq(orders.id, o.id));
   }
 }
+
+/** Foto penerimaan contoh (JPEG base64 kecil; server hanya memeriksa bentuk dan ukurannya). */
+export const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAMCAgMCAgMD';
+/** Anggota mengirim foto penerimaan, lalu petugas toko memverifikasi valid → pesanan selesai. Mengembalikan respons langkah terakhir yang dijalankan. */
+export async function receiveViaMember(member: Client, staff: Client, id: string) {
+  const c = await member.post(`/me/orders/${id}/check`, { photo: PHOTO });
+  if (c.status !== 201) return c;
+  return staff.post(`/orders/${id}/verify-receipt`, { valid: true });
+}

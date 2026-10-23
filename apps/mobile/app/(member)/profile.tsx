@@ -7,6 +7,7 @@ import { C } from '../../src/theme';
 import { Button } from '../../src/ui';
 import { AccountHeader, BalanceCard, MenuRow, ProfileProgress, SectionHead } from '../../src/AccountParts';
 import { useData } from '../../src/hooks';
+import { guardGroup } from '../../src/roleRoute';
 
 interface Profile { name: string; phone: string | null; address: string | null; familyCode: string | null; memberNo: string | null; avatarUrl: string | null; balance: number; rewardBalance: number; coinBalance: number; active: boolean }
 
@@ -15,7 +16,7 @@ const missing = (p: Profile) => PARTS.filter(([k]) => !(p[k] ?? '').trim()).map(
 
 
 /** Akun anggota bergaya Klik Indomaret: kepala hijau, saldo, kelengkapan profil, lalu menu pengaturan. Mengubah profil ada di layar sendiri. */
-export default function ProfileScreen() {
+function ProfileScreen() {
   const q = useData<Profile>('/me');
   const { logout } = useSession();
   const router = useRouter();
@@ -45,3 +46,5 @@ export default function ProfileScreen() {
     </ScrollView>
   );
 }
+
+export default guardGroup('member', 'profile', ProfileScreen);

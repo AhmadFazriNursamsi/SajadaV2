@@ -77,16 +77,21 @@ export class OverviewService {
   async depotTasks(a: Actor) {
     const own = a.did ? eq(orders.depotId, a.did) : undefined;
     const poOwn = a.did ? eq(purchaseOrders.depotId, a.did) : undefined;
-    const [[tenant], os, pos, ds, [reqs], [reps]] = await Promise.all([
+    const [[tenant], os, pos, ds, [reqs], [reps], [ver]] = await Promise.all([
       this.db.select().from(tenants).where(eq(tenants.id, a.tid)),
       this.db.select().from(orders).where(and(eq(orders.tenantId, a.tid), own)),
       this.db.select().from(purchaseOrders).where(and(eq(purchaseOrders.tenantId, a.tid), poOwn)),
       this.db.select().from(depots).where(and(eq(depots.tenantId, a.tid), a.did ? eq(depots.id, a.did) : undefined)),
       this.db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(stockRequests).where(and(eq(stockRequests.tenantId, a.tid), eq(stockRequests.status, 'pending'), a.did ? eq(stockRequests.depotId, a.did) : undefined)),
       this.db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.status, 'open'), a.did ? eq(orderReports.depotId, a.did) : undefined)),
+      this.db.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(orderReports).where(and(eq(orderReports.tenantId, a.tid), eq(orderReports.verifyStatus, 'pending'), a.did ? eq(orderReports.depotId, a.did) : undefined)),
     ]);
     const live = os.filter((o) => !o.cancelled && !o.returned);
+    // Kewajiban stok opname bulanan: petugas melihat status tokonya; pengurus melihat toko mana yang sedang dikunci.
+    const opname = a.did ? await this.core.opnameStatus(this.db, a.did) : null;
+    const opnameLocked = a.did ? [] : (await Promise.all(ds.filter((d) => d.active).map(async (d) => ({ name: d.name, s: await this.core.opnameStatus(this.db, d.id) })))).filter((x) => x.s.state === 'locked').map((x) => ({ name: x.name, month: x.s.month }));
     return {
+      opname, opnameLocked,
       tenant: { name: tenant!.name, depotName: a.did ? ds[0]?.name ?? '' : 'Semua toko' },
       actions: {
         awaitingApproval: grp(live.filter((o) => !o.approvedAt)),
@@ -94,6 +99,7 @@ export class OverviewService {
         draftPo: pos.filter((p) => p.status === 'draft').length,
         stockRequestsPending: reqs?.n ?? 0,
         memberReports: reps?.n ?? 0,
+        pendingVerification: ver?.n ?? 0,
       },
     };
   }

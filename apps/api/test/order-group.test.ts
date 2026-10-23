@@ -1,6 +1,6 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, as, boot, undoOrder } from './helpers';
+import { Client, as, boot, undoOrder, PHOTO, receiveViaMember } from './helpers';
 
 let app: NestFastifyApplication;
 let admin: Client, staff: Client, member: Client;
@@ -63,7 +63,7 @@ describe('satu checkout dengan banyak produk = satu pesanan', () => {
     for (const p of prods.slice(0, 3)) expect(stock1[p.id]).toBe(stock0[p.id] - 1);
     expect((await rowsOf(groupNo)).every((o: any) => o.status === 'shipped' && o.deliveryRef === 'SJ-GRUP')).toBe(true);
     expect((await staff.post(`/orders/${ids[0]}/ship`, { deliveryRef: 'SJ-2' })).status).toBe(422);
-    expect((await staff.post(`/orders/${ids[0]}/receive`, { proofRef: 'BKT-GRUP', receiverName: 'Penerima' })).status).toBe(201);
+    expect((await receiveViaMember(member, staff, ids[0])).status).toBe(201); // anggota memeriksa barang → seluruh pesanan diterima
     expect((await rowsOf(groupNo)).every((o: any) => o.status === 'received')).toBe(true);
   });
 
@@ -73,7 +73,7 @@ describe('satu checkout dengan banyak produk = satu pesanan', () => {
     expect(new Set(mine.map((o: any) => o.groupId)).size).toBe(1);
     expect(mine[0]).not.toHaveProperty('canRequestReturn');
     // data untuk layar Detail pesanan: harga satuan, waktu/penyetuju, pembayaran, pengiriman, penerimaan
-    expect(mine[0]).toMatchObject({ pay: 'balance', shipped: true, received: true, deliveryRef: 'SJ-GRUP', receiverName: 'Penerima', proofRef: 'BKT-GRUP' });
+    expect(mine[0]).toMatchObject({ pay: 'balance', shipped: true, received: true, deliveryRef: 'SJ-GRUP', receiverName: 'Siti Rahma', proofRef: expect.stringMatching(/^CEK-/) });
     expect(mine[0].price).toBeGreaterThan(0); expect(mine[0].approvedBy).toMatch(/^Petugas/); expect(mine[0].approvedAt).toBeTruthy(); expect(mine[0].receivedAt).toBeTruthy();
     expect((await member.post(`/me/orders/${ids[0]}/return-request`, { reason: 'ingin retur' })).status).toBe(404);   // fitur retur dihapus
     expect((await staff.post(`/orders/${ids[1]}/return`, { reason: 'ingin retur', restock: true })).status).toBe(404);
@@ -136,64 +136,97 @@ describe('anggota memeriksa barang yang dikirim; laporkan ke toko bila tidak ses
 
   it('belum dikirim: tidak bisa diperiksa; setelah dikirim anggota boleh memeriksa (canCheck)', async () => {
     const o = await mk();
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).status).toBe(422);
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).status).toBe(422);
     let mine = (await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id);
     expect(mine.canCheck).toBe(false);
     await staff.post(`/orders/${o[0].id}/ship`, { deliveryRef: 'SJ-CEK' });
     mine = (await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id);
     expect(mine).toMatchObject({ canCheck: true, report: null });
-    expect((await staff.post(`/me/orders/${o[0].id}/check`, {})).status).toBe(403);       // hanya anggota
+    expect((await staff.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).status).toBe(403);       // hanya anggota
     expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'shipped')).toBe(true);   // belum ada konfirmasi: petugas masih bisa mengonfirmasi
   });
 
-  it('semua sesuai: tercatat "ok" tanpa tindakan toko', async () => {
+  it('foto wajib; semua sesuai: pesanan belum selesai sampai petugas memverifikasi valid, lalu petugas yang menyelesaikannya', async () => {
     const o = await mk();
     await staff.post(`/orders/${o[0].id}/ship`, { deliveryRef: 'SJ-OK' });
-    const r = await member.post(`/me/orders/${o[0].id}/check`, {});
-    expect(r.status).toBe(201); expect(r.body.status).toBe('ok');
-    expect((await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id)).toMatchObject({ report: { status: 'ok' }, canCheck: false });
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).body.message).toMatch(/hanya bisa dilakukan sekali/);   // sekali saja
-    // pemeriksaan anggota = konfirmasi diterima: petugas tidak perlu mengonfirmasi lagi
+    const noPhoto = await member.post(`/me/orders/${o[0].id}/check`, {});
+    expect(noPhoto.status).toBe(400); expect(JSON.stringify(noPhoto.body)).toMatch(/Foto barang yang diterima wajib/);
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: 'bukan-foto' })).status).toBe(400);
+    const r = await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO });
+    expect(r.status).toBe(201); expect(r.body).toMatchObject({ status: 'ok', verifyStatus: 'pending' });
+    expect((await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id)).toMatchObject({ report: { status: 'ok', verifyStatus: 'pending' }, canCheck: false });
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).body.message).toMatch(/tunggu verifikasi petugas/);
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'shipped')).toBe(true);        // belum selesai
+    expect((await staff.get('/overview/depot-tasks')).body.actions.pendingVerification).toBeGreaterThan(0);
+    expect((await staff.get(`/orders/${o[0].id}/receipt-photo`)).body.photo).toBe(PHOTO);
+    expect((await member.get(`/orders/${o[0].id}/receipt-photo`)).status).toBe(403);
+    expect((await member.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(403);
+    expect((await admin.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(403); // pengurus tidak memverifikasi
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(201);
     expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'received' && x.proofRef === `CEK-${o[0].groupNo}`)).toBe(true);
-    expect((await staff.post(`/orders/${o[0].id}/receive`, { proofRef: 'BKT-X', receiverName: 'X' })).status).toBe(422);
-    expect((await staff.get('/orders')).body.find((x: any) => x.id === o[0].id).report.status).toBe('ok');
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(422); // sudah selesai
+    expect((await staff.get('/orders')).body.find((x: any) => x.id === o[0].id).report).toMatchObject({ status: 'ok', verifyStatus: 'valid', verifiedByName: expect.any(String) });
     expect((await staff.get('/overview/depot-tasks')).body.actions.memberReports).toBe(0);
   });
 
-  it('tidak sesuai: wajib alasan, jumlah ≤ dipesan; laporan terbuka muncul di toko dan bisa ditanggapi', async () => {
+  it('foto ditolak petugas: pesanan tetap belum selesai, anggota diberi tahu dan boleh mengirim ulang', async () => {
+    const o = await mk();
+    await staff.post(`/orders/${o[0].id}/ship`, { deliveryRef: 'SJ-INV' });
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).status).toBe(201);
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: false })).status).toBe(400); // alasan wajib
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: false, note: 'Foto buram, barang tidak terlihat' })).status).toBe(201);
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'shipped')).toBe(true);
+    const mine = (await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id);
+    expect(mine).toMatchObject({ canCheck: true, report: { verifyStatus: 'invalid', verifyNote: 'Foto buram, barang tidak terlihat' } });
+    const inbox = (await member.get('/me/notifications')).body.items;
+    expect(inbox.some((n: any) => n.title === 'Foto penerimaan ditolak' && n.body.includes('Foto buram'))).toBe(true);
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(422); // tidak ada yang menunggu
+    const again = await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO + 'AAAA' });
+    expect(again.status).toBe(201);
+    expect((await staff.get(`/orders/${o[0].id}/receipt-photo`)).body.photo).toBe(PHOTO + 'AAAA'); // foto baru menggantikan
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(201);
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'received')).toBe(true);
+  });
+
+  it('tidak sesuai: wajib alasan, jumlah ≤ dipesan; laporan terbuka muncul di toko, ditanggapi, lalu petugas memverifikasi', async () => {
     const o = await mk();
     await staff.post(`/orders/${o[0].id}/ship`, { deliveryRef: 'SJ-BAD' });
     const A = o[0].productId, B = o[1].productId;
-    expect((await member.post(`/me/orders/${o[0].id}/check`, { items: [{ productId: A, qty: 0 }, { productId: B, qty: 1 }] })).body.message).toMatch(/Pilih alasan selisihnya/);
-    expect((await member.post(`/me/orders/${o[0].id}/check`, { items: [{ productId: A, qty: 0, issue: 'lainnya' }, { productId: B, qty: 1 }] })).body.message).toMatch(/perlu dijelaskan/);
-    expect((await member.post(`/me/orders/${o[0].id}/check`, { items: [{ productId: A, qty: 2 }, { productId: B, qty: 1 }] })).body.message).toMatch(/melebihi yang dipesan/);
-    expect((await member.post(`/me/orders/${o[0].id}/check`, { items: [{ productId: crypto.randomUUID(), qty: 1 }] })).status).toBe(422);
-    const r = await member.post(`/me/orders/${o[0].id}/check`, { note: 'Dus penyok', items: [{ productId: A, qty: 0, issue: 'rusak', note: '1 pak basah' }, { productId: B, qty: 1 }] });
-    expect(r.status).toBe(201); expect(r.body.status).toBe('open');
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).body.message).toMatch(/sudah Anda laporkan/);     // sekali saja
-    expect((await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id)).toMatchObject({ report: { status: 'open' }, canCheck: false });
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO, items: [{ productId: A, qty: 0 }, { productId: B, qty: 1 }] })).body.message).toMatch(/Pilih alasan selisihnya/);
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO, items: [{ productId: A, qty: 0, issue: 'lainnya' }, { productId: B, qty: 1 }] })).body.message).toMatch(/perlu dijelaskan/);
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO, items: [{ productId: A, qty: 2 }, { productId: B, qty: 1 }] })).body.message).toMatch(/melebihi yang dipesan/);
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO, items: [{ productId: crypto.randomUUID(), qty: 1 }] })).status).toBe(422);
+    const r = await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO, note: 'Dus penyok', items: [{ productId: A, qty: 0, issue: 'rusak', note: '1 pak basah' }, { productId: B, qty: 1 }] });
+    expect(r.status).toBe(201); expect(r.body).toMatchObject({ status: 'open', verifyStatus: 'pending' });
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).body.message).toMatch(/tunggu verifikasi petugas/);
     expect((await staff.get('/overview/depot-tasks')).body.actions.memberReports).toBeGreaterThan(0);
     const rep = (await staff.get(`/orders/${o[1].id}/report`)).body;                          // lewat baris mana pun
-    expect(rep).toMatchObject({ status: 'open', note: 'Dus penyok', groupNo: o[0].groupNo });
+    expect(rep).toMatchObject({ status: 'open', note: 'Dus penyok', groupNo: o[0].groupNo, verifyStatus: 'pending' });
     expect(rep.lines.find((l: any) => l.productId === A)).toMatchObject({ qtyOrdered: 1, qtyReceived: 0, issue: 'rusak', note: '1 pak basah' });
     expect((await admin.get('/audit-log?q=TIDAK SESUAI&limit=3')).body.rows[0].message).toMatch(/anggota melaporkan barang TIDAK SESUAI/);
     expect((await member.post(`/orders/${o[0].id}/report/resolve`, { note: 'x' })).status).toBe(403);
     expect((await staff.post(`/orders/${o[0].id}/report/resolve`, { note: 'x' })).status).toBe(400);
     expect((await staff.post(`/orders/${o[0].id}/report/resolve`, { note: 'Pengganti dikirim besok' })).status).toBe(201);
     expect((await staff.post(`/orders/${o[0].id}/report/resolve`, { note: 'lagi' })).status).toBe(422);
+    expect((await staff.post(`/orders/${o[0].id}/verify-receipt`, { valid: true })).status).toBe(201);
     const mine = (await member.get('/me/orders')).body.orders.find((x: any) => x.id === o[0].id);
-    expect(mine).toMatchObject({ report: { status: 'resolved', resolution: 'Pengganti dikirim besok' }, canCheck: false });
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).body.message).toMatch(/hanya bisa dilakukan sekali/);   // tidak bisa diperiksa ulang
-    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'received')).toBe(true);                             // tetap tercatat diterima
+    expect(mine).toMatchObject({ report: { status: 'resolved', resolution: 'Pengganti dikirim besok', verifyStatus: 'valid' }, canCheck: false });
+    expect((await member.post(`/me/orders/${o[0].id}/check`, { photo: PHOTO })).body.message).toMatch(/Pesanan ini sudah selesai|hanya bisa dilakukan sekali/);
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'received')).toBe(true);
   });
 
-  it('bila petugas lebih dulu mengonfirmasi diterima, anggota tetap bisa memeriksa sekali (bukti terima petugas tidak tertimpa)', async () => {
+  it('petugas dan pengurus tidak bisa mengonfirmasi penerimaan pesanan anggota secara langsung', async () => {
     const o = await mk(1);
     await staff.post(`/orders/${o[0].id}/ship`, { deliveryRef: 'SJ-LD' });
-    expect((await staff.post(`/orders/${o[0].id}/receive`, { proofRef: 'BKT-PETUGAS', receiverName: 'Bu Ani' })).status).toBe(201);
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).status).toBe(201);
-    const row = (await rowsOf(o[0].groupNo))[0];
-    expect(row).toMatchObject({ status: 'received', proofRef: 'BKT-PETUGAS', receiverName: 'Bu Ani' });
-    expect((await member.post(`/me/orders/${o[0].id}/check`, {})).status).toBe(422);
+    const rewardBefore = (await member.get('/me/rewards')).body.balance;
+    for (const who of [staff, admin]) {
+      const r = await who.post(`/orders/${o[0].id}/receive`, { proofRef: 'BKT-PETUGAS', receiverName: 'Bu Ani' });
+      expect(r.status).toBe(422);
+      expect(r.body.message).toMatch(/foto barang yang diterima/);
+    }
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'shipped')).toBe(true); // tetap menunggu anggota
+    expect((await member.get('/me/rewards')).body.balance).toBe(rewardBefore); // tidak ada imbalan tanpa foto + verifikasi
+    expect((await receiveViaMember(member, staff, o[0].id)).status).toBe(201);
+    expect((await rowsOf(o[0].groupNo)).every((x: any) => x.status === 'received' && x.proofRef === `CEK-${o[0].groupNo}`)).toBe(true);
   });
 });

@@ -61,12 +61,11 @@ describe('Pengurus: produk', () => {
   it('ubah harga tercatat; pesanan lama tetap memakai harga saat dibuat', async () => {
     const p = (await centralOf('PRD-04'));
     expect((await pusat.call('PATCH', `/central/products/${p.id}`, {})).status).toBe(422);
-    expect((await pusat.call('PATCH', `/central/products/${p.id}`, { listPrice: 100 })).status).toBe(422); // harga normal harus di atas harga jual
     const ok = await pusat.call('PATCH', `/central/products/${p.id}`, { sellPrice: 140000, name: 'Produk D isi' });
     expect(ok.status).toBe(200);
     expect(ok.body.sellPrice).toBe(140000);
     const log = (await pengurus.get('/audit-log?limit=20')).body.rows;
-    expect(log.some((r: any) => r.message.includes('harga jual 130000 → 140000'))).toBe(true);
+    expect(log.some((r: any) => r.message.includes('harga 130000 → 140000'))).toBe(true);
     // nonaktifkan produk; produk nonaktif tidak bisa dikirim
     expect((await pusat.call('PATCH', `/products/${p.id}/active`)).status).toBe(200);
     await pusat.post('/central/receipts', { productId: p.id, qty: 10 });
@@ -175,7 +174,7 @@ describe('Petugas dibatasi ke pekerjaan toko', () => {
   it('petugas tetap bisa pekerjaan toko: stok, pesanan tokonya, PO, opname, kiriman, tugas toko', async () => {
     for (const u of ['/depots', '/products', '/orders', '/purchase-orders', '/suppliers', '/stock-counts', '/central/shipments', '/overview/depot-tasks', '/commission-plan']) expect((await petugas.get(u)).status, u).toBe(200);
     const t = (await petugas.get('/overview/depot-tasks')).body;
-    expect(Object.keys(t.actions).sort()).toEqual(['awaitingApproval', 'draftPo', 'memberReports', 'paidNotShipped', 'stockRequestsPending']);
+    expect(Object.keys(t.actions).sort()).toEqual(['awaitingApproval', 'draftPo', 'memberReports', 'paidNotShipped', 'pendingVerification', 'stockRequestsPending']);
     expect(t.tenant.depotName).toBe(depots[0].name);
     expect(JSON.stringify(t)).not.toMatch(/balance|salesValue|pendingCommission|memberBalance/i); // tanpa data keuangan
     expect((await petugas2.get('/overview/depot-tasks')).body.tenant.depotName).toBe(depots[1].name);

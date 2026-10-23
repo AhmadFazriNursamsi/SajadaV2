@@ -1,7 +1,7 @@
 import { Body, Controller, ForbiddenException, Get, Injectable, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { and, desc, eq, or, gt, sql } from 'drizzle-orm';
 import type { z } from 'zod';
-import { INSTALLMENT_AMOUNT, INSTALLMENT_DAYS, REWARD_PERCENT, rejectSchema, rewardTransferSchema, withdrawalSchema } from '@sajadah/shared';
+import { INSTALLMENT_AMOUNT, INSTALLMENT_DAYS, rejectSchema, rewardTransferSchema, withdrawalSchema } from '@sajadah/shared';
 import { Database } from '../db/db';
 import { coinEntries, installmentEntries, members, orders, rewardEntries, voucherRedemptions, withdrawals } from '../db/schema';
 import { InjectDb } from '../core/db.module';
@@ -15,7 +15,7 @@ import type { Actor } from '../auth/auth.types';
 const rp = (n: number) => `Rp${n.toLocaleString('id-ID')}`;
 
 /**
- * Saldo penarikan anggota: 20% dari belanja sendiri yang sudah diterima (dikreditkan oleh OrdersService).
+ * Saldo penarikan anggota: persen imbalan tiap produk dari belanja sendiri yang sudah diterima (dikreditkan oleh OrdersService).
  * Anggota bisa memindahkannya ke saldo belanja atau mengajukan penarikan ke rekening; pengurus menyetujui dan mentransfer di luar aplikasi.
  */
 @Injectable()
@@ -38,7 +38,7 @@ export class RewardsService {
       this.db.select().from(withdrawals).where(eq(withdrawals.memberId, a.mid)).orderBy(desc(withdrawals.createdAt)).limit(20),
     ]);
     return {
-      percent: REWARD_PERCENT, balance: m?.rewardBalance ?? 0,
+      balance: m?.rewardBalance ?? 0,
       entries: entries.map((e) => ({ id: e.id, kind: e.kind, amount: e.amount, refNo: e.refNo, note: e.note, createdAt: e.createdAt })),
       withdrawals: ws.map((w) => ({ id: w.id, no: w.no, amount: w.amount, bank: w.bank, accountNo: w.accountNo, accountName: w.accountName, status: w.status, reason: w.reason, createdAt: w.createdAt })),
     };
@@ -130,7 +130,6 @@ export class RewardsService {
       g.set(o.groupId, x);
     }
     return {
-      percent: REWARD_PERCENT,
       kpis: { rewardBalance: bal?.reward ?? 0, rewardEarned: earned?.v ?? 0, withdrawnPaid: paid?.v ?? 0, coinBalance: bal?.coins ?? 0, coinsEarned: coinsEarned?.v ?? 0, coinsRedeemed: coinsRedeemed?.v ?? 0, withdrawalsPending: wdPending?.n ?? 0, redemptionsPending: vcPending?.n ?? 0 },
       orders: [...g.entries()].map(([id, x]) => ({ id, ...x })),
       members: ms.map((m) => ({ id: m.id, name: m.name, memberNo: m.memberNo, balance: m.balance, rewardBalance: m.rewardBalance, coinBalance: m.coinBalance })),

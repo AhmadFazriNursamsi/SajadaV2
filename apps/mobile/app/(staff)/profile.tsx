@@ -7,10 +7,11 @@ import { Avatar, MenuRow, SectionHead } from '../../src/AccountParts';
 import { StaffHeader } from '../../src/StaffParts';
 import { C } from '../../src/theme';
 import { Button } from '../../src/ui';
+import { guardGroup } from '../../src/roleRoute';
 
 
 /** Akun petugas toko: nama, toko, ganti kata sandi, dan keluar. */
-export default function StaffProfile() {
+function StaffProfile() {
   const { me, logout } = useSession();
   const router = useRouter();
   const dialog = useDialog();
@@ -39,3 +40,5 @@ export default function StaffProfile() {
     </ScrollView>
   );
 }
+
+export default guardGroup('staff', 'profile', StaffProfile);

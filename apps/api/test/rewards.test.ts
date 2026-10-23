@@ -1,6 +1,6 @@
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Client, as, boot } from './helpers';
+import { Client, as, boot, PHOTO, receiveViaMember } from './helpers';
 
 let app: NestFastifyApplication;
 let admin: Client, staff: Client, member: Client;
@@ -16,10 +16,10 @@ afterAll(() => app.close());
 
 const rewards = async () => (await member.get('/me/rewards')).body;
 
-describe('Saldo penarikan: 20% dari belanja yang sudah diterima', () => {
+describe('Saldo penarikan: imbalan per produk dari belanja yang sudah diterima', () => {
   let earned = 0;
 
-  it('belum bertambah saat dipesan, disetujui, atau dikirim; bertambah 20% saat diterima, sekali saja', async () => {
+  it('belum bertambah saat dipesan, disetujui, atau dikirim; bertambah sesuai persen produk (bawaan 20%) saat diterima, sekali saja', async () => {
     const before = (await rewards()).balance;
     const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 2 }] });
     expect(placed.status).toBe(201);
@@ -27,14 +27,13 @@ describe('Saldo penarikan: 20% dari belanja yang sudah diterima', () => {
     await staff.post(`/orders/${id}/approve`);
     await staff.post(`/orders/${id}/ship`, { deliveryRef: 'SJ-REWARD-1' });
     expect((await rewards()).balance).toBe(before);
-    expect((await staff.post(`/orders/${id}/receive`, { proofRef: 'BUKTI-1', receiverName: 'Siti' })).status).toBe(201);
+    expect((await receiveViaMember(member, staff, id)).status).toBe(201);
     earned = Math.floor(total * 0.2);
     const r = await rewards();
-    expect(r.percent).toBe(20);
     expect(r.balance).toBe(before + earned - 30_000); // hari aktif pertama: tagihan harian Rp30.000 dipotong dari saldo penarikan
     expect(r.entries.find((e: any) => e.kind === 'earn')).toMatchObject({ amount: earned });
     expect(r.entries.find((e: any) => e.kind === 'installment')).toMatchObject({ amount: -30_000 });
-    expect((await staff.post(`/orders/${id}/receive`, { proofRef: 'BUKTI-1', receiverName: 'Siti' })).status).toBe(422); // tidak bisa dua kali
+    expect((await member.post(`/me/orders/${id}/check`, { photo: PHOTO })).status).toBe(422); // tidak bisa dua kali
     expect((await rewards()).balance).toBe(before + earned - 30_000);
     expect((await member.get('/me')).body.rewardBalance).toBe(before + earned - 30_000);
   });
@@ -60,7 +59,7 @@ describe('Saldo penarikan: 20% dari belanja yang sudah diterima', () => {
     // tambah saldo lewat belanja diterima (cukup untuk dua penarikan minimal)
     const placed = await member.post('/me/orders', { depotId: depot.id, items: [{ productId: prod.id, qty: 4 }] });
     const oid = placed.body[0].id;
-    await staff.post(`/orders/${oid}/approve`); await staff.post(`/orders/${oid}/ship`, { deliveryRef: 'SJ-REWARD-W' }); await staff.post(`/orders/${oid}/receive`, { proofRef: 'BUKTI-W', receiverName: 'Siti' });
+    await staff.post(`/orders/${oid}/approve`); await staff.post(`/orders/${oid}/ship`, { deliveryRef: 'SJ-REWARD-W' }); await receiveViaMember(member, staff, oid);
     const r0 = (await rewards()).balance;
     const bad = { amount: 1000, bank: 'BCA', accountNo: '12ab', accountName: 'Siti' };
     expect((await member.post('/me/withdrawals', bad)).status).toBe(400);
@@ -93,7 +92,6 @@ describe('Saldo penarikan: 20% dari belanja yang sudah diterima', () => {
   it('ringkasan imbalan untuk pengurus: saldo beredar, imbalan per pesanan, saldo per anggota; anggota ditolak', async () => {
     expect((await member.get('/rewards/summary')).status).toBe(403);
     const r = (await admin.get('/rewards/summary')).body;
-    expect(r.percent).toBe(20);
     expect(r.kpis.rewardEarned).toBeGreaterThan(0);
     expect(r.kpis.rewardBalance).toBe((await rewards()).balance);
     expect(r.kpis.rewardBalance).toBeLessThanOrEqual(r.kpis.rewardEarned);
@@ -103,5 +101,48 @@ describe('Saldo penarikan: 20% dari belanja yang sudah diterima', () => {
     const ov = (await admin.get('/overview')).body;
     expect(ov.actions).toHaveProperty('withdrawalsPending');
     expect(ov.kpis.rewardBalance).toBe(r.kpis.rewardBalance);
+  });
+});
+
+describe('Persen imbalan per produk', () => {
+  const receive = async (items: { productId: string; qty: number }[], tag: string) => {
+    const placed = await member.post('/me/orders', { depotId: depot.id, items });
+    expect(placed.status).toBe(201);
+    const id = placed.body[0].id;
+    await staff.post(`/orders/${id}/approve`);
+    await staff.post(`/orders/${id}/ship`, { deliveryRef: `SJ-${tag}` });
+    expect((await receiveViaMember(member, staff, id)).status).toBe(201);
+    return placed.body as { productId: string; total: number }[];
+  };
+  const lastEarn = async () => (await rewards()).entries.find((e: any) => e.kind === 'earn').amount;
+
+  it('hanya admin yang mengatur; harus bilangan bulat 0–100; tercatat di audit', async () => {
+    expect(prod.rewardPercent).toBe(20); // produk lama tetap 20%
+    expect((await member.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 5 })).status).toBe(403);
+    expect((await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: -1 })).status).toBe(400);
+    expect((await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 101 })).status).toBe(400);
+    expect((await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 12.5 })).status).toBe(400);
+    expect((await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 10 })).status).toBe(200);
+    expect((await admin.get('/products')).body.find((p: any) => p.id === prod.id).rewardPercent).toBe(10);
+  });
+
+  it('imbalan dihitung per produk, tiap baris dibulatkan ke bawah, 0% tidak memberi apa pun', async () => {
+    const products = (await admin.get('/products')).body.filter((p: any) => p.depotId === depot.id);
+    const other = products.find((p: any) => p.id !== prod.id);
+    expect((await admin.call('PATCH', `/central/products/${other.id}`, { rewardPercent: 0 })).status).toBe(200);
+    const lines = await receive([{ productId: prod.id, qty: 1 }, { productId: other.id, qty: 1 }], 'PP-1');
+    const a = lines.find((l) => l.productId === prod.id)!;
+    expect(await lastEarn()).toBe(Math.floor(a.total * 0.1)); // 10% untuk produk pertama, 0% untuk produk kedua
+    expect((await admin.call('PATCH', `/central/products/${other.id}`, { rewardPercent: 33 })).status).toBe(200);
+    const lines2 = await receive([{ productId: prod.id, qty: 1 }, { productId: other.id, qty: 1 }], 'PP-2');
+    const expected = lines2.reduce((n, l) => n + Math.floor((l.total * (l.productId === prod.id ? 10 : 33)) / 100), 0);
+    expect(await lastEarn()).toBe(expected);
+  });
+
+  it('perubahan persen tidak mengubah imbalan pesanan yang sudah dikreditkan', async () => {
+    const before = await lastEarn();
+    expect((await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 50 })).status).toBe(200);
+    expect(await lastEarn()).toBe(before);
+    await admin.call('PATCH', `/central/products/${prod.id}`, { rewardPercent: 20 }); // kembalikan
   });
 });

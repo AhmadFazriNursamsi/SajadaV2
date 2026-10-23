@@ -16,7 +16,7 @@ export default function InstallmentsPage() {
   const d = q.data;
   return (
     <>
-      <PageHead title="Tagihan harian" desc={d ? `Tiap hari ada belanja sendiri yang diterima, saldo penarikan anggota dipotong ${R(d.amount)} (sekali per hari) sampai ${d.totalDays} hari aktif. Hari tanpa transaksi dilewati, jadi pelunasan makin panjang bila jarang belanja. Saldo yang kurang menjadi tunggakan dan dipotong dari imbalan berikutnya.` : ''} />
+      <PageHead title="Tagihan harian" desc={d ? `Otomatis dipotong ${R(d.amount)} dari saldo penarikan (sekali per hari) pada hari ketika total imbalan anggota dari belanja sendiri yang diterima sudah mencapai ${R(d.amount)}, sampai ${d.totalDays} hari aktif. Hari dengan imbalan di bawah batas itu dilewati, jadi pelunasan makin panjang bila imbalannya kecil atau jarang belanja.` : ''} />
       <div className="page">
         <Gate q={q}>
           {d && (<>

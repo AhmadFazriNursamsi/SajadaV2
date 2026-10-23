@@ -10,7 +10,7 @@ export interface DetailOrder {
   shipped: boolean; deliveryRef: string | null; received: boolean; receivedAt: string | null; receiverName: string | null; proofRef: string | null; cancelReason: string | null;
   /** `product` (bila ada) menampilkan foto produk di rincian. */
   lines: { name: string; qty: number; price: number; total: number; product?: ShopProduct }[]; total: number; party?: string;
-  report?: { status: string; resolution: string | null } | null;
+  report?: { status: string; resolution: string | null; verifyStatus?: string; verifyNote?: string | null } | null;
 }
 const when = (d: string | null) => (d ? new Date(d).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null);
 
@@ -28,6 +28,8 @@ function buildSteps(o: DetailOrder): { l: string; done: boolean; sub: string | n
 }
 
 function reportText(r: NonNullable<DetailOrder['report']>): string {
+  if (r.verifyStatus === 'pending') return 'foto terkirim, menunggu verifikasi petugas toko';
+  if (r.verifyStatus === 'invalid') return `foto ditolak${r.verifyNote ? `: ${r.verifyNote}` : ''}; kirim ulang foto`;
   if (r.status === 'ok') return 'sesuai';
   if (r.status === 'open') return 'ada laporan, menunggu tanggapan toko';
   return `laporan ditanggapi${r.resolution ? `: ${r.resolution}` : ''}`;
